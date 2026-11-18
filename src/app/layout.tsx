@@ -9,7 +9,7 @@ const body = Plus_Jakarta_Sans({ variable: "--font-body", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: `${BRAND.name} : apprendre en s'amusant`,
-  description: "Maths, physique-chimie, programmation et plus, en parcours ludiques de 5 minutes.",
+  description: "Maths, physique-chimie, programmation, code de la route, langues et plus, en parcours ludiques de 5 minutes.",
 };
 export const viewport: Viewport = { themeColor: "#0b0706" };
 

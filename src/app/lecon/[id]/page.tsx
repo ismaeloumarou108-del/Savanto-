@@ -8,6 +8,8 @@ import { MathTex } from "@/components/Math";
 import { Confetti } from "@/components/Confetti";
 import { runJs } from "@/lib/runCode";
 import { sfx } from "@/lib/sfx";
+import { speak } from "@/lib/speech";
+import { RoadSign, Scene } from "@/components/RoadSign";
 
 type Verdict = null | { ok: boolean; msg: string };
 
@@ -76,7 +78,7 @@ export default function LessonPage() {
       const gain = (isBoss ? 20 : 10) + (c >= 3 ? 2 * (c - 2) : 0);
       setXp((x) => x + gain);
       setPulse((n) => n + 1);
-      if (sound) (c >= 3 ? sfx.combo(c) : sfx.good());
+      if (sound) { if (c >= 3) sfx.combo(c); else sfx.good(); }
     } else {
       setMistakes((m) => m + 1);
       setCombo(0);
@@ -93,7 +95,7 @@ export default function LessonPage() {
   function next() {
     setVerdict(null);
     if (pos + 1 < queue.length) return setPos(pos + 1);
-    if (isBoss && mistakes > 1) { setPhase("timeout"); return; }
+    if (isBoss && mistakes > (node.maxMistakes ?? 1)) { setPhase("timeout"); return; }
     if (node.memo?.length) setPhase("memo");
     else finish();
   }
@@ -109,7 +111,7 @@ export default function LessonPage() {
   if (phase === "timeout")
     return (
       <Blocker icon="♛" title={timeLeft !== null && timeLeft <= 0 ? "Temps écoulé !" : "Le gardien résiste…"}
-        text="Pour vaincre l'épreuve finale, il faut répondre à temps avec au plus une erreur. Retente ta chance !"
+        text={`Pour réussir l'épreuve finale, il faut répondre à temps avec au plus ${node.maxMistakes ?? 1} erreur${(node.maxMistakes ?? 1) > 1 ? "s" : ""}. Retente ta chance !`}
         back={`/parcours/${journey.id}`} retry={() => location.reload()} />
     );
 
@@ -150,7 +152,7 @@ export default function LessonPage() {
     <Shell progress={progress} back={`/parcours/${journey.id}`} combo={combo} timeLeft={timeLeft} pulse={pulse} xp={xp}
       sound={sound} toggleSound={() => update({ sound: !sound })} label={`${TYPE_LABEL[node.type]} · ${node.title}`}>
       <StepView key={pos} step={step} locked={!!verdict} sound={sound} onAnswer={answer} onContinue={next}
-        coach={() => (spendAi() ? coachHint(step) : null)} aiLeft={p.plan === "pro" ? null : p.aiLeft} />
+        coach={(attempt) => askCoach(step, attempt, spendAi)} aiLeft={p.plan === "pro" ? null : p.aiLeft} />
       {verdict && (
         <div className={`anim-rise fixed inset-x-0 bottom-0 z-30 border-t px-4 pb-6 pt-5 backdrop-blur-xl ${verdict.ok ? "border-good/50 bg-[#0f2219]/95" : "border-bad/50 bg-[#2a1015]/95"}`}>
           <div className="mx-auto max-w-2xl">
@@ -209,6 +211,22 @@ function Shell({ children, progress, back, combo, timeLeft, pulse = 0, xp, sound
 }
 
 // Coach simulé pour le prototype : à brancher sur une vraie IA côté serveur.
+const QUOTA_MSG = "Tu as utilisé tes indices du jour. Passe à Pro pour un coach illimité.";
+
+// Demande un indice au vrai coach IA ; repli sur un indice générique si l'IA n'est pas configurée.
+async function askCoach(step: Step, attempt: string | undefined, spendAi: () => boolean): Promise<string> {
+  if (!spendAi()) return QUOTA_MSG;
+  try {
+    const r = await fetch("/api/coach", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step, attempt }) });
+    if (r.ok) {
+      const { hint } = (await r.json()) as { hint?: string };
+      if (hint) return hint;
+    }
+    if (r.status === 429) return QUOTA_MSG;
+  } catch {}
+  return coachHint(step);
+}
+
 function coachHint(step: Step): string {
   switch (step.kind) {
     case "choice": return "Élimine d'abord la réponse la moins logique, puis teste chaque proposition sur un exemple.";
@@ -217,6 +235,7 @@ function coachHint(step: Step): string {
     case "order": return "Cherche d'abord la toute première étape : celle qui ne dépend d'aucune autre.";
     case "match": return "Commence par la paire dont tu es le plus sûr, les autres deviendront plus évidentes.";
     case "fill": return "Lis la phrase entière à voix haute avec chaque option : une seule sonne juste.";
+    case "listen": return "Réécoute en te concentrant sur la première syllabe, puis compare avec chaque proposition.";
     default: return "";
   }
 }
@@ -247,9 +266,11 @@ function shuffle<T>(a: T[], seed: number) {
 
 function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: {
   step: Step; locked: boolean; sound: boolean; onAnswer: (ok: boolean, msg: string) => void; onContinue: () => void;
-  coach: () => string | null; aiLeft: number | null;
+  coach: (attempt?: string) => Promise<string>; aiLeft: number | null;
 }) {
   const [hint, setHint] = useState<string | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const draft = useRef<string | undefined>(undefined);
   const [shake, setShake] = useState(0);
   const tap = () => sound && sfx.tap();
   const fail = (msg: string) => { setShake((n) => n + 1); onAnswer(false, msg); };
@@ -262,9 +283,9 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
           <p><b className="text-orange">Coach IA</b><br />{hint}</p>
         </div>
       ) : (
-        <button disabled={locked} className="text-sm font-bold text-orange disabled:opacity-40"
-          onClick={() => setHint(coach() ?? "Tu as utilisé tes indices du jour. Passe à Pro pour un coach illimité.")}>
-          ✦ Demander un indice{aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
+        <button disabled={locked || thinking} className={`text-sm font-bold text-orange disabled:opacity-40 ${thinking ? "animate-pulse" : ""}`}
+          onClick={async () => { setThinking(true); setHint(await coach(draft.current)); setThinking(false); }}>
+          {thinking ? "✦ Le coach réfléchit…" : "✦ Demander un indice"}{!thinking && aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
         </button>
       )}
     </div>
@@ -279,15 +300,18 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
           <span className="pill">Nouvelle notion</span>
           <h2 className="mt-3 font-display text-3xl font-extrabold">{step.title}</h2>
           <p className="mt-4 text-lg leading-relaxed text-text/90">{step.body}</p>
+          <Visuals step={step} auto />
           {step.math && <div className="card-hot mt-6 p-4 text-center"><MathTex tex={step.math} /></div>}
           {step.code && <CodeBlock code={step.code} />}
           <button className="btn-primary mt-8 w-full text-lg" onClick={onContinue}>J&apos;ai compris</button>
         </div>
       );
+    case "listen":
+      return wrap(<Listen step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "choice":
       return wrap(<Choice step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "number":
-      return wrap(<NumberQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
+      return wrap(<NumberQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} onDraft={(d) => (draft.current = d)} />);
     case "order":
       return wrap(<Order step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "match":
@@ -295,21 +319,68 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
     case "fill":
       return wrap(<Fill step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "code":
-      return wrap(<CodeQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
+      return wrap(<CodeQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} onDraft={(d) => (draft.current = d)} />);
   }
+}
+
+function SpeakButton({ text, lang, auto = false }: { text: string; lang: string; auto?: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const play = (rate = 0.9) => { if (speak(text, lang, rate)) { setPlaying(true); setTimeout(() => setPlaying(false), 900); } };
+  useEffect(() => { if (auto) play(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="mt-5 flex items-center justify-center gap-3">
+      <button onClick={() => play()} aria-label="Écouter"
+        className={`grad flex h-20 w-20 items-center justify-center rounded-full text-3xl text-white shadow-[0_10px_30px_-8px_rgba(255,90,40,0.8)] transition active:scale-90 ${playing ? "anim-glow scale-105" : ""}`}>🔊</button>
+      <button onClick={() => play(0.55)} aria-label="Écouter lentement" className="flex h-12 w-12 items-center justify-center rounded-full border border-line bg-surface-2 text-xl">🐢</button>
+    </div>
+  );
+}
+
+function Visuals({ step, auto = false }: { step: { sign?: import("@/components/RoadSign").SignId; scene?: import("@/components/RoadSign").SceneId; say?: { text: string; lang: string } }; auto?: boolean }) {
+  return (
+    <>
+      {step.sign && <div className="anim-pop mt-5 flex justify-center"><RoadSign id={step.sign} size={130} /></div>}
+      {step.scene && <div className="anim-rise mt-5 flex justify-center"><Scene id={step.scene} /></div>}
+      {step.say && <SpeakButton text={step.say.text} lang={step.say.lang} auto={auto} />}
+    </>
+  );
+}
+
+function Listen({ step, locked, tap, onAnswer, fail }: QProps<"listen">) {
+  const [choice, setChoice] = useState<number | null>(null);
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <SpeakButton text={step.say.text} lang={step.say.lang} auto />
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        {step.options.map((o, k) => {
+          const st = locked
+            ? k === step.answer ? "border-good bg-good/15 text-good" : k === choice ? "border-bad bg-bad/15 text-bad" : "opacity-50"
+            : k === choice ? "border-orange bg-orange/15 scale-[1.02]" : "hover:border-orange/40";
+          return (
+            <button key={k} disabled={locked} onClick={() => { tap?.(); setChoice(k); }}
+              className={`rounded-2xl border-2 border-line bg-surface-2 px-3 py-4 text-center font-semibold transition ${st}`}>{o}</button>
+          );
+        })}
+      </div>
+      {!locked && <button className="btn-primary mt-6 w-full" disabled={choice === null}
+        onClick={() => (choice === step.answer ? onAnswer(true, step.why) : fail(step.why))}>Vérifier</button>}
+    </>
+  );
 }
 
 function CodeBlock({ code }: { code: string }) {
   return <pre className="mt-6 overflow-x-auto rounded-2xl border border-line bg-[#0e0a09] p-4 font-mono text-sm text-[#ffd0a8]">{code}</pre>;
 }
 
-type QProps<K extends Step["kind"]> = { step: Extract<Step, { kind: K }>; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; fail: (msg: string) => void; tap?: () => void };
+type QProps<K extends Step["kind"]> = { step: Extract<Step, { kind: K }>; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; fail: (msg: string) => void; tap?: () => void; onDraft?: (d: string) => void };
 
 function Choice({ step, locked, tap, onAnswer, fail }: QProps<"choice">) {
   const [choice, setChoice] = useState<number | null>(null);
   return (
     <>
       <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <Visuals step={step} />
       {step.math && <MathTex tex={step.math} />}
       {step.code && <CodeBlock code={step.code} />}
       <div className="mt-6 grid gap-3">
@@ -331,7 +402,7 @@ function Choice({ step, locked, tap, onAnswer, fail }: QProps<"choice">) {
   );
 }
 
-function NumberQ({ step, locked, onAnswer, fail }: QProps<"number">) {
+function NumberQ({ step, locked, onAnswer, fail, onDraft }: QProps<"number">) {
   const [value, setValue] = useState("");
   const check = () => {
     const n = parseFloat(value.replace(",", ".").replace(/\s/g, ""));
@@ -343,7 +414,7 @@ function NumberQ({ step, locked, onAnswer, fail }: QProps<"number">) {
       <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
       {step.math && <div className="card-hot mt-4 p-3 text-center"><MathTex tex={step.math} /></div>}
       <div className="mt-6 flex items-center gap-3">
-        <input autoFocus inputMode="decimal" disabled={locked} value={value} onChange={(e) => setValue(e.target.value)}
+        <input autoFocus inputMode="decimal" disabled={locked} value={value} onChange={(e) => { setValue(e.target.value); onDraft?.(e.target.value); }}
           onKeyDown={(e) => e.key === "Enter" && value && !locked && check()}
           className="w-44 rounded-2xl border-2 border-line bg-surface-2 px-4 py-3 text-2xl font-bold outline-none transition focus:border-orange" placeholder="?" />
         {step.unit && <span className="text-lg font-semibold text-muted">{step.unit}</span>}
@@ -459,7 +530,7 @@ function Fill({ step, locked, tap, onAnswer, fail }: QProps<"fill">) {
   );
 }
 
-function CodeQ({ step, locked, onAnswer, fail }: QProps<"code">) {
+function CodeQ({ step, locked, onAnswer, fail, onDraft }: QProps<"code">) {
   const [code, setCode] = useState(step.starter);
   const [out, setOut] = useState<{ output: string; error?: string } | null>(null);
   const [running, setRunning] = useState(false);
@@ -472,7 +543,7 @@ function CodeQ({ step, locked, onAnswer, fail }: QProps<"code">) {
           <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" /><span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" /><span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
           <span className="ml-2">main.js</span>
         </div>
-        <textarea spellCheck={false} disabled={locked} value={code} onChange={(e) => setCode(e.target.value)}
+        <textarea spellCheck={false} disabled={locked} value={code} onChange={(e) => { setCode(e.target.value); onDraft?.(e.target.value); }}
           onKeyDown={(e) => {
             if (e.key === "Tab") {
               e.preventDefault();

@@ -7,7 +7,7 @@ import { sfx } from "@/lib/sfx";
 import { Flame } from "@/components/Stats";
 
 const DAYS = ["L", "M", "M", "J", "V", "S", "D"];
-const KIND_LABEL: Record<Step["kind"], string> = { explain: "Explication", choice: "QCM", number: "Calcul", code: "Code", order: "Remettre dans l'ordre", match: "Associer", fill: "Texte à trous" };
+const KIND_LABEL: Record<Step["kind"], string> = { explain: "Explication", choice: "QCM", number: "Calcul", code: "Code", order: "Remettre dans l'ordre", match: "Associer", fill: "Texte à trous", listen: "Écoute" };
 
 function weekDates() {
   const d = new Date();
