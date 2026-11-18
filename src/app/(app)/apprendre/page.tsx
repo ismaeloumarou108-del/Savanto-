@@ -1,79 +1,152 @@
 "use client";
 import Link from "next/link";
-import { SUBJECTS, lessonCount } from "@/lib/content";
-import { FREE_ENERGY, levelOf, useStore } from "@/lib/store";
+import { useState } from "react";
+import { TYPE_LABEL, ALL_JOURNEYS, findJourney, journeyProgress, nextNode, type MapNode, type Step } from "@/lib/content";
+import { QUESTS, useStore } from "@/lib/store";
+import { sfx } from "@/lib/sfx";
+import { Flame } from "@/components/Stats";
 
-export default function Dashboard() {
-  const { p, unlimited } = useStore();
-  const lv = levelOf(p.xp);
-  const next = SUBJECTS.flatMap((s) => s.courses.flatMap((c) => c.lessons.map((l) => ({ s, l }))))
-    .find(({ l }) => !p.completed.includes(l.id) && (!l.premium || unlimited));
-  const doneToday = p.lastDay === new Date().toISOString().slice(0, 10);
+const DAYS = ["L", "M", "M", "J", "V", "S", "D"];
+const KIND_LABEL: Record<Step["kind"], string> = { explain: "Explication", choice: "QCM", number: "Calcul", code: "Code", order: "Remettre dans l'ordre", match: "Associer", fill: "Texte à trous" };
+
+function weekDates() {
+  const d = new Date();
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return Array.from({ length: 7 }, (_, i) => {
+    const x = new Date(monday);
+    x.setDate(monday.getDate() + i);
+    return x.toISOString().slice(0, 10);
+  });
+}
+
+export default function Home() {
+  const { p, update, claimQuest } = useStore();
+  const [fly, setFly] = useState<string | null>(null);
+  const cur = findJourney(p.currentJourney) ?? ALL_JOURNEYS[0];
+  const { journey, subject } = cur;
+  const prog = journeyProgress(journey, p.completed);
+  const nxt = nextNode(journey, p.completed);
+  const chapter = journey.chapters.find((c) => c.nodes.some((n) => n.id === nxt?.id));
+  const today = new Date().toISOString().slice(0, 10);
+  const week = weekDates();
+
+  const summary = (n: MapNode) => {
+    const counts = new Map<string, number>();
+    n.steps?.forEach((s) => counts.set(KIND_LABEL[s.kind], (counts.get(KIND_LABEL[s.kind]) ?? 0) + 1));
+    return [...counts.entries()];
+  };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
-      <div className="space-y-6">
-        <section className="card flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-muted">{doneToday ? "Objectif du jour atteint 🎉" : "Ta leçon du jour"}</p>
-            <h1 className="mt-1 font-display text-3xl font-extrabold">{next ? next.l.title : "Tout est terminé, bravo !"}</h1>
-            {next && <p className="mt-1 text-muted">{next.s.title} · {next.l.minutes} min</p>}
-          </div>
-          {next && <Link href={`/lecon/${next.l.id}`} className="btn-primary text-lg">{doneToday ? "Continuer" : "Commencer"}</Link>}
-        </section>
-
-        <section>
-          <h2 className="mb-3 font-display text-2xl font-extrabold">Matières</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {SUBJECTS.map((s) => {
-              const total = lessonCount(s);
-              const done = s.courses.flatMap((c) => c.lessons).filter((l) => p.completed.includes(l.id)).length;
-              return (
-                <Link key={s.id} href={`/apprendre/${s.id}`} className="card flex items-center gap-4 p-4 transition hover:-translate-y-0.5">
-                  <div className={`${s.color} flex h-14 w-14 shrink-0 items-center justify-center rounded-xl font-display text-xl font-extrabold text-white`}>{s.emoji}</div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-bold">{s.title}</h3>
-                    <div className="mt-2 h-2 rounded-full bg-line"><div className="h-2 rounded-full bg-good" style={{ width: `${(done / total) * 100}%` }} /></div>
-                    <p className="mt-1 text-xs text-muted">{done}/{total} leçons</p>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
+    <div className="space-y-5">
+      <div className="anim-rise">
+        <span className="pill">Ton parcours</span>
+        <h1 className="mt-3 font-display text-3xl font-extrabold tracking-tight sm:text-4xl">{journey.title}</h1>
+        <p className="mt-1 text-muted">{subject.title} · {journey.level} · {prog.pct} % terminé</p>
       </div>
 
-      <aside className="space-y-4">
-        <div className="card p-5">
-          <p className="text-sm font-semibold text-muted">Niveau {lv.level}</p>
-          <div className="mt-2 h-3 rounded-full bg-line"><div className="h-3 rounded-full bg-gold" style={{ width: `${(lv.into / lv.span) * 100}%` }} /></div>
-          <p className="mt-1 text-xs text-muted">{lv.into}/{lv.span} XP avant le niveau {lv.level + 1}</p>
+      <section className="card p-5">
+        <p className="label">Ta semaine</p>
+        <div className="mt-4 grid grid-cols-7 gap-2">
+          {week.map((d, i) => {
+            const on = p.activeDays.includes(d);
+            const isToday = d === today;
+            return (
+              <div key={d} className="flex flex-col items-center gap-2">
+                <span className="text-xs font-semibold text-muted">{DAYS[i]}</span>
+                <div className={`flex aspect-square w-full max-w-14 items-center justify-center rounded-2xl text-sm font-bold transition
+                  ${on ? "grad anim-pop text-white shadow-[0_8px_20px_-6px_rgba(255,90,40,0.7)]" : isToday ? "border-2 border-dashed border-orange/60 text-orange" : "border border-line bg-surface-2 text-muted"}`}>
+                  {on ? "✓" : isToday ? "!" : d < today ? "·" : ""}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="card p-5">
-          <p className="font-bold">🔥 Série de {p.streak} jour{p.streak > 1 ? "s" : ""}</p>
-          <p className="mt-1 text-sm text-muted">Record : {p.bestStreak} · Gels disponibles : {p.freezes}</p>
-          {p.freezes === 0 && <p className="mt-2 text-xs text-muted">Avec Plus, 2 gels protègent ta série si tu rates un jour.</p>}
-        </div>
-        <div className="card p-5">
-          <p className="font-bold">⚡ Énergie</p>
-          {unlimited ? (
-            <p className="mt-1 text-sm text-muted">Illimitée avec ton offre.</p>
-          ) : (
-            <>
-              <div className="mt-2 flex gap-1">{Array.from({ length: FREE_ENERGY }).map((_, i) => (
-                <div key={i} className={`h-3 flex-1 rounded-full ${i < p.energy ? "bg-brand" : "bg-line"}`} />))}</div>
-              <p className="mt-2 text-sm text-muted">1 leçon = 1 énergie. Recharge complète chaque jour.</p>
-              <Link href="/tarifs" className="mt-3 block text-sm font-bold text-brand">Énergie illimitée →</Link>
-            </>
+        <p className="mt-4 text-sm leading-relaxed text-muted">
+          <span className="mr-1 inline-block align-[-3px]"><Flame s={16} /></span> Série de <b className="text-text">{p.streak} jour{p.streak > 1 ? "s" : ""}</b>
+          {p.freezes > 0 && <span> · 🧊 {p.freezes} gel{p.freezes > 1 ? "s" : ""}</span>}
+          {!p.activeDays.includes(today) && <span className="text-orange"> · Fais une leçon pour l&apos;allumer aujourd&apos;hui</span>}
+        </p>
+      </section>
+
+      {nxt ? (
+        <section className="card-hot anim-rise p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-display text-xl font-bold">{nxt.title}</h2>
+              <p className="text-sm text-muted">{chapter?.title} · {TYPE_LABEL[nxt.type]}{nxt.minutes ? ` · ${nxt.minutes} min` : ""}</p>
+            </div>
+            <span className="rounded-full border border-orange/50 px-3 py-1 text-xs font-bold text-orange">Suivant</span>
+          </div>
+          {nxt.type !== "coffre" && (
+            <ul className="mt-4 space-y-2 text-[15px]">
+              {summary(nxt).map(([k, n]) => (
+                <li key={k} className="flex justify-between"><span>{k}</span><span className="text-muted">× {n}</span></li>
+              ))}
+            </ul>
           )}
+          <Link href={nxt.type === "coffre" ? `/parcours/${journey.id}` : `/lecon/${nxt.id}`} className="btn-primary mt-5 w-full text-lg">
+            {nxt.type === "coffre" ? "Ouvrir le coffre 🎁" : prog.done === 0 ? "Commencer" : "Continuer"}
+          </Link>
+        </section>
+      ) : (
+        <section className="card-hot p-5 text-center">
+          <p className="text-4xl">🏆</p>
+          <h2 className="mt-2 font-display text-xl font-bold">Parcours terminé !</h2>
+          <Link href={`/certificat/${journey.id}`} className="btn-primary mt-4">Voir mon certificat</Link>
+        </section>
+      )}
+
+      <section className="card p-5">
+        <div className="flex items-center justify-between">
+          <p className="label">Quêtes du jour</p>
+          <span className="text-xs text-muted">Nouvelles quêtes demain</span>
         </div>
-        <div className="card border-dashed p-5">
-          <p className="font-bold">🏆 Défi de la semaine</p>
-          <p className="mt-1 text-sm text-muted">Gagne 100 XP avant dimanche.</p>
-          <div className="mt-2 h-2 rounded-full bg-line"><div className="h-2 rounded-full bg-flame" style={{ width: `${Math.min(100, p.weeklyXp)}%` }} /></div>
-          <p className="mt-1 text-xs text-muted">{Math.min(100, p.weeklyXp)}/100 XP</p>
+        <ul className="mt-4 space-y-4">
+          {QUESTS.map((q) => {
+            const v = Math.min(q.goal, q.value(p));
+            const done = v >= q.goal;
+            const claimed = p.claimedQuests.includes(q.id);
+            return (
+              <li key={q.id} className="relative flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="flex justify-between text-sm font-semibold"><span>{q.label}</span><span className="text-muted">{v}/{q.goal}</span></div>
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-surface-2">
+                    <div className="grad h-full rounded-full transition-all duration-700" style={{ width: `${(v / q.goal) * 100}%` }} />
+                  </div>
+                </div>
+                <button disabled={!done || claimed}
+                  onClick={() => { claimQuest(q.id, q.reward); if (p.sound) sfx.chest(); setFly(q.id); setTimeout(() => setFly(null), 1000); }}
+                  className={`w-20 rounded-xl px-2 py-2 text-xs font-bold transition ${claimed ? "text-good" : done ? "btn-primary !px-2 !py-2 anim-wobble" : "border border-line text-muted"}`}>
+                  {claimed ? "✓ Reçu" : `+${q.reward} XP`}
+                </button>
+                {fly === q.id && <span className="anim-xp absolute -top-2 right-6 font-display text-lg font-extrabold text-[#ffd15c]">+{q.reward} XP</span>}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="label">Autres parcours</p>
+          <Link href="/parcours" className="text-sm font-semibold text-orange">Tout voir</Link>
         </div>
-      </aside>
+        <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2">
+          {ALL_JOURNEYS.filter((x) => x.journey.id !== journey.id).map(({ journey: j, subject: s }) => {
+            const pr = journeyProgress(j, p.completed);
+            return (
+              <button key={j.id} onClick={() => { update({ currentJourney: j.id }); if (p.sound) sfx.tap(); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="card w-56 shrink-0 snap-start p-4 text-left transition hover:-translate-y-1 hover:border-orange/40">
+                <span className="grad inline-flex h-10 w-10 items-center justify-center rounded-xl font-display font-bold text-white">{s.icon}</span>
+                <p className="mt-3 font-bold leading-tight">{j.title}</p>
+                <p className="text-xs text-muted">{s.title}</p>
+                <div className="mt-3 h-1.5 rounded-full bg-surface-2"><div className="grad h-full rounded-full" style={{ width: `${pr.pct}%` }} /></div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

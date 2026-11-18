@@ -1,30 +1,25 @@
 "use client";
 import { FREE_ENERGY, useStore } from "@/lib/store";
 
-export function StreakPill() {
-  const { p } = useStore();
-  return (
-    <span title="Série de jours" className="flex items-center gap-1 font-bold text-flame">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 2s5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 1-3s0 2 2 3c0-4 2-7 2-10z" /></svg>
-      {p.streak}
-    </span>
-  );
-}
-export function XpPill() {
-  const { p } = useStore();
-  return (
-    <span title="Points d'expérience" className="flex items-center gap-1 font-bold text-gold">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 2l3 7 7 .6-5.3 4.6L18.4 22 12 18l-6.4 4 1.7-7.8L2 9.6 9 9z" /></svg>
-      {p.xp}
-    </span>
-  );
-}
-export function EnergyPill() {
+export const Flame = ({ s = 18 }: { s?: number }) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" aria-hidden><path fill="url(#fl)" d="M12 2s6 5.5 6 11a6 6 0 0 1-12 0c0-2.6 1.4-4.3 1.4-4.3S7.6 11 10 12c0-4.5 2-7.5 2-10z" />
+    <defs><linearGradient id="fl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffb062" /><stop offset="1" stopColor="#e2381d" /></linearGradient></defs></svg>
+);
+export const Bolt = ({ s = 18 }: { s?: number }) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="#ffb062" aria-hidden><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>
+);
+export const Star = ({ s = 18 }: { s?: number }) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="#ffd15c" aria-hidden><path d="M12 2l3 7 7 .6-5.3 4.6L18.4 22 12 18l-6.4 4 1.7-7.8L2 9.6 9 9z" /></svg>
+);
+
+export function StatPills() {
   const { p, unlimited } = useStore();
+  const pill = "flex items-center gap-1.5 rounded-full border border-line bg-surface-2/80 px-3 py-1.5 text-sm font-bold";
   return (
-    <span title="Énergie : 1 leçon = 1 point" className="flex items-center gap-1 font-bold text-brand">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>
-      {unlimited ? "∞" : `${p.energy}/${FREE_ENERGY}`}
-    </span>
+    <div className="flex items-center gap-2">
+      <span title="Série de jours" className={pill}><Flame />{p.streak}</span>
+      <span title="XP" className={pill}><Star />{p.xp}</span>
+      <span title="Énergie" className={`${pill} hidden sm:flex`}><Bolt />{unlimited ? "∞" : `${p.energy}/${FREE_ENERGY}`}</span>
+    </div>
   );
 }

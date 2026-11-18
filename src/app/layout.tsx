@@ -1,16 +1,17 @@
-import type { Metadata } from "next";
-import { Fraunces, Plus_Jakarta_Sans } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Sora, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { StoreProvider } from "@/lib/store";
 import { BRAND } from "@/lib/brand";
 
-const display = Fraunces({ variable: "--font-display", subsets: ["latin"], weight: ["600", "800"] });
+const display = Sora({ variable: "--font-display", subsets: ["latin"], weight: ["600", "700", "800"] });
 const body = Plus_Jakarta_Sans({ variable: "--font-body", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: `${BRAND.name} : apprendre un peu chaque jour`,
-  description: "Maths, physique-chimie, programmation et plus, en leçons de 5 minutes.",
+  title: `${BRAND.name} : apprendre en s'amusant`,
+  description: "Maths, physique-chimie, programmation et plus, en parcours ludiques de 5 minutes.",
 };
+export const viewport: Viewport = { themeColor: "#0b0706" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

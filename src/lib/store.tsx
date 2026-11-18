@@ -22,12 +22,22 @@ export type Progress = {
   dayKey: string;
   completed: string[];
   perfect: string[];
+  activeDays: string[];
+  currentJourney: string;
+  sound: boolean;
+  todayXp: number;
+  todayLessons: number;
+  todayPerfect: number;
+  bestCombo: number;
+  claimedQuests: string[];
 };
+
+export type Reward = { kind: "xp"; amount: number } | { kind: "freeze" } | { kind: "energy"; amount: number };
 
 export const FREE_ENERGY = 5;
 export const FREE_AI = 3;
 
-const KEY = "savanto-progress-v1";
+const KEY = "savanto-progress-v2";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -57,13 +67,21 @@ const initial = (): Progress => ({
   dayKey: today(),
   completed: [],
   perfect: [],
+  activeDays: [],
+  currentJourney: "algebre",
+  sound: true,
+  todayXp: 0,
+  todayLessons: 0,
+  todayPerfect: 0,
+  bestCombo: 0,
+  claimedQuests: [],
 });
 
 // Remet à zéro ce qui dépend du jour et de la semaine.
 function refresh(p: Progress): Progress {
   const t = today();
   let next = { ...p };
-  if (next.dayKey !== t) next = { ...next, dayKey: t, energy: FREE_ENERGY, aiLeft: FREE_AI };
+  if (next.dayKey !== t) next = { ...next, dayKey: t, energy: FREE_ENERGY, aiLeft: FREE_AI, todayXp: 0, todayLessons: 0, todayPerfect: 0, claimedQuests: [] };
   const w = weekOf();
   if (next.weekKey !== w) next = { ...next, weekKey: w, weeklyXp: 0 };
   // Série perdue si plus d'un jour manqué et pas assez de gels.
@@ -89,7 +107,10 @@ type Ctx = {
   unlimited: boolean;
   spendEnergy: () => boolean;
   spendAi: () => boolean;
-  completeLesson: (id: string, xp: number, perfect: boolean) => { streakUp: boolean };
+  completeLesson: (id: string, xp: number, perfect: boolean, combo: number) => { streakUp: boolean };
+  openChest: (id: string) => Reward;
+  claimQuest: (id: string, xp: number) => void;
+  update: (patch: Partial<Progress>) => void;
   setPlan: (plan: Plan) => void;
   reset: () => void;
 };
@@ -134,7 +155,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [p.aiLeft, p.plan]);
 
   const completeLesson = useCallback(
-    (id: string, xp: number, perfect: boolean) => {
+    (id: string, xp: number, perfect: boolean, combo: number) => {
       const t = today();
       const streakUp = p.lastDay !== t;
       setP((s) => {
@@ -148,6 +169,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           lastDay: t,
           completed: s.completed.includes(id) ? s.completed : [...s.completed, id],
           perfect: perfect && !s.perfect.includes(id) ? [...s.perfect, id] : s.perfect,
+          activeDays: s.activeDays.includes(t) ? s.activeDays : [...s.activeDays.slice(-60), t],
+          todayXp: s.todayXp + xp,
+          todayLessons: s.todayLessons + 1,
+          todayPerfect: s.todayPerfect + (perfect ? 1 : 0),
+          bestCombo: Math.max(s.bestCombo, combo),
         };
       });
       return { streakUp };
@@ -161,8 +187,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const reset = useCallback(() => setP(initial()), []);
 
+  const openChest = useCallback((id: string): Reward => {
+    const r = Math.random();
+    const reward: Reward = r < 0.6 ? { kind: "xp", amount: [15, 20, 30, 50][Math.floor(Math.random() * 4)] } : r < 0.85 ? { kind: "freeze" } : { kind: "energy", amount: 3 };
+    setP((s) => {
+      if (s.completed.includes(id)) return s;
+      const base = { ...s, completed: [...s.completed, id] };
+      if (reward.kind === "xp") return { ...base, xp: s.xp + reward.amount, weeklyXp: s.weeklyXp + reward.amount, todayXp: s.todayXp + reward.amount };
+      if (reward.kind === "freeze") return { ...base, freezes: s.freezes + 1 };
+      return { ...base, energy: s.energy + reward.amount };
+    });
+    return reward;
+  }, []);
+
+  const claimQuest = useCallback((id: string, xp: number) => {
+    setP((s) => (s.claimedQuests.includes(id) ? s : { ...s, claimedQuests: [...s.claimedQuests, id], xp: s.xp + xp, weeklyXp: s.weeklyXp + xp, todayXp: s.todayXp + xp }));
+  }, []);
+
+  const update = useCallback((patch: Partial<Progress>) => setP((s) => ({ ...s, ...patch })), []);
+
   return (
-    <StoreContext.Provider value={{ p, ready, unlimited, spendEnergy, spendAi, completeLesson, setPlan, reset }}>
+    <StoreContext.Provider value={{ p, ready, unlimited, spendEnergy, spendAi, completeLesson, setPlan, reset, openChest, claimQuest, update }}>
       {children}
     </StoreContext.Provider>
   );
@@ -184,3 +229,9 @@ export function levelOf(xp: number) {
   const nxt = LEVELS[l] ?? cur + 1000;
   return { level: l, into: xp - cur, span: nxt - cur };
 }
+
+export const QUESTS = [
+  { id: "q-xp", label: "Gagne 30 XP", reward: 10, goal: 30, value: (p: Progress) => p.todayXp },
+  { id: "q-lessons", label: "Termine 2 leçons", reward: 15, goal: 2, value: (p: Progress) => p.todayLessons },
+  { id: "q-perfect", label: "Réussis 1 leçon sans faute", reward: 20, goal: 1, value: (p: Progress) => p.todayPerfect },
+];

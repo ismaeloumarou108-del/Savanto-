@@ -1,211 +1,476 @@
 "use client";
 import Link from "next/link";
 import { notFound, useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { findLesson, type Step } from "@/lib/content";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TYPE_LABEL, findNode, type Step } from "@/lib/content";
 import { useStore } from "@/lib/store";
-import { Math } from "@/components/Math";
+import { MathTex } from "@/components/Math";
+import { Confetti } from "@/components/Confetti";
 import { runJs } from "@/lib/runCode";
+import { sfx } from "@/lib/sfx";
 
 type Verdict = null | { ok: boolean; msg: string };
 
 export default function LessonPage() {
   const { id } = useParams<{ id: string }>();
-  const found = findLesson(id);
+  const found = findNode(id);
   const router = useRouter();
-  const { p, ready, unlimited, spendEnergy, spendAi, completeLesson } = useStore();
+  const { p, ready, unlimited, spendEnergy, spendAi, completeLesson, update } = useStore();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const charged = useRef(false);
-  const [i, setI] = useState(0);
+  const steps = useMemo(() => found?.node.steps ?? [], [found]);
+  // File d'attente : une question ratée revient à la fin de la leçon.
+  const [queue, setQueue] = useState<number[]>(() => steps.map((_, i) => i));
+  const [pos, setPos] = useState(0);
+  const [retried, setRetried] = useState<number[]>([]);
   const [verdict, setVerdict] = useState<Verdict>(null);
   const [mistakes, setMistakes] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [xp, setXp] = useState(0);
+  const [phase, setPhase] = useState<"play" | "memo" | "done" | "timeout">("play");
   const [result, setResult] = useState<null | { xp: number; streakUp: boolean }>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(found?.node.timeLimit ?? null);
+  const [pulse, setPulse] = useState(0);
+
+  const sound = p.sound;
+  const isBoss = found?.node.type === "boss";
 
   useEffect(() => {
     if (!ready || charged.current || !found) return;
     charged.current = true;
-    if (found.lesson.premium && !unlimited) return setAllowed(false);
+    if (found.node.premium && !unlimited) return setAllowed(false);
     setAllowed(spendEnergy());
   }, [ready, found, unlimited, spendEnergy]);
 
-  if (!found) notFound();
-  const { lesson, subject } = found;
-  const steps = lesson.steps;
-  const step = steps[i];
+  useEffect(() => {
+    if (!allowed || timeLeft === null || phase !== "play") return;
+    if (timeLeft <= 0) { setPhase("timeout"); if (sound) sfx.bad(); return; }
+    const t = setTimeout(() => setTimeLeft((s) => (s ?? 1) - 1), 1000);
+    return () => clearTimeout(t);
+  }, [allowed, timeLeft, phase, sound]);
+
+  if (!found || !found.node.steps) notFound();
+  const { node, journey } = found;
 
   if (allowed === null) return <div className="p-10 text-center text-muted">Chargement…</div>;
   if (allowed === false)
     return (
       <Blocker
-        title={lesson.premium && !unlimited ? "Leçon réservée aux abonnés" : "Plus d'énergie pour aujourd'hui"}
-        text={lesson.premium && !unlimited ? "Cette leçon fait partie de l'offre Plus." : "Ton énergie se recharge demain. Avec Plus, l'énergie est illimitée."}
+        icon={node.premium && !unlimited ? "👑" : "⚡"}
+        title={node.premium && !unlimited ? "Étape réservée aux abonnés" : "Plus d'énergie pour aujourd'hui"}
+        text={node.premium && !unlimited ? "Cette étape fait partie de l'offre Plus." : "Ton énergie se recharge demain. Avec Plus, elle est illimitée."}
+        back={`/parcours/${journey.id}`}
       />
     );
 
-  const exercises = steps.filter((s) => s.kind !== "explain").length;
+  const stepIdx = queue[pos];
+  const step = steps[stepIdx];
+  const progress = phase === "play" ? pos / queue.length : 1;
+
+  function answer(ok: boolean, msg: string) {
+    if (ok) {
+      const c = combo + 1;
+      setCombo(c);
+      setBestCombo((b) => Math.max(b, c));
+      const gain = (isBoss ? 20 : 10) + (c >= 3 ? 2 * (c - 2) : 0);
+      setXp((x) => x + gain);
+      setPulse((n) => n + 1);
+      if (sound) (c >= 3 ? sfx.combo(c) : sfx.good());
+    } else {
+      setMistakes((m) => m + 1);
+      setCombo(0);
+      if (sound) sfx.bad();
+      if (!isBoss && !retried.includes(stepIdx)) {
+        setQueue((q) => [...q, stepIdx]);
+        setRetried((r) => [...r, stepIdx]);
+        msg += "\n\n↻ On y reviendra à la fin de la leçon.";
+      }
+    }
+    setVerdict({ ok, msg });
+  }
 
   function next() {
     setVerdict(null);
-    if (i + 1 < steps.length) return setI(i + 1);
-    const xp = exercises * 10 + (mistakes === 0 ? 5 : 0);
-    const { streakUp } = completeLesson(lesson.id, xp, mistakes === 0);
-    setResult({ xp, streakUp });
+    if (pos + 1 < queue.length) return setPos(pos + 1);
+    if (isBoss && mistakes > 1) { setPhase("timeout"); return; }
+    if (node.memo?.length) setPhase("memo");
+    else finish();
   }
 
-  if (result)
+  function finish() {
+    const total = xp + (mistakes === 0 ? 5 : 0);
+    const { streakUp } = completeLesson(node.id, total, mistakes === 0, bestCombo);
+    if (sound) sfx.win();
+    setResult({ xp: total, streakUp });
+    setPhase("done");
+  }
+
+  if (phase === "timeout")
     return (
-      <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
-        <div className="text-6xl">🎉</div>
-        <h1 className="font-display text-4xl font-extrabold">Leçon terminée !</h1>
-        <div className="flex gap-3">
-          <div className="card px-5 py-3"><p className="text-xs font-bold text-muted">XP</p><p className="text-2xl font-extrabold text-gold">+{result.xp}</p></div>
-          <div className="card px-5 py-3"><p className="text-xs font-bold text-muted">Série</p><p className="text-2xl font-extrabold text-flame">🔥 {p.streak}</p></div>
-          <div className="card px-5 py-3"><p className="text-xs font-bold text-muted">Erreurs</p><p className="text-2xl font-extrabold">{mistakes}</p></div>
+      <Blocker icon="♛" title={timeLeft !== null && timeLeft <= 0 ? "Temps écoulé !" : "Le gardien résiste…"}
+        text="Pour vaincre l'épreuve finale, il faut répondre à temps avec au plus une erreur. Retente ta chance !"
+        back={`/parcours/${journey.id}`} retry={() => location.reload()} />
+    );
+
+  if (phase === "memo")
+    return (
+      <Shell progress={1} back={`/parcours/${journey.id}`} combo={0} timeLeft={null}>
+        <div className="anim-rise">
+          <span className="pill">Fiche mémo</span>
+          <h2 className="mt-3 font-display text-2xl font-extrabold">À retenir</h2>
+          <ul className="card-hot mt-5 space-y-3 p-5">
+            {node.memo!.map((m) => (
+              <li key={m} className="flex gap-3"><span className="text-orange">◆</span><span className="font-semibold">{m}</span></li>
+            ))}
+          </ul>
+          <p className="mt-3 text-sm text-muted">Tu retrouveras cette fiche à tout moment depuis ton profil.</p>
+          <button className="btn-primary mt-8 w-full text-lg" onClick={finish}>Terminer</button>
         </div>
-        {result.streakUp && <p className="font-semibold text-flame">Ta série continue, reviens demain pour la prolonger !</p>}
-        {mistakes === 0 && <p className="font-semibold text-good">Sans faute : +5 XP de bonus.</p>}
-        <button className="btn-primary mt-4 w-full text-lg" onClick={() => router.push(`/apprendre/${subject.id}`)}>Continuer</button>
+      </Shell>
+    );
+
+  if (phase === "done" && result)
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-5 px-4 text-center">
+        <Confetti />
+        <div className="anim-pop text-7xl">{mistakes === 0 ? "🏆" : "🎉"}</div>
+        <h1 className="font-display text-4xl font-extrabold">{isBoss ? "Gardien vaincu !" : mistakes === 0 ? "Sans faute !" : "Leçon terminée !"}</h1>
+        <div className="grid w-full grid-cols-3 gap-3">
+          <Tile label="XP" value={`+${result.xp}`} color="text-[#ffd15c]" delay={0} />
+          <Tile label="Combo max" value={`×${bestCombo}`} color="text-orange" delay={120} />
+          <Tile label="Précision" value={`${Math.round(((steps.filter((s) => s.kind !== "explain").length) / Math.max(1, steps.filter((s) => s.kind !== "explain").length + mistakes)) * 100)} %`} color="text-good" delay={240} />
+        </div>
+        {result.streakUp && <p className="card-hot anim-rise w-full p-4 font-semibold">🔥 Série : {p.streak} jour{p.streak > 1 ? "s" : ""} ! Reviens demain pour la prolonger.</p>}
+        <button className="btn-primary mt-2 w-full text-lg" onClick={() => router.push(`/parcours/${journey.id}`)}>Continuer</button>
       </div>
     );
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-4">
-      <div className="flex items-center gap-4 py-5">
-        <Link href={`/apprendre/${subject.id}`} aria-label="Quitter" className="text-2xl text-muted">×</Link>
-        <div className="h-3 flex-1 rounded-full bg-line">
-          <div className="h-3 rounded-full bg-good transition-all" style={{ width: `${(i / steps.length) * 100}%` }} />
-        </div>
-        <span className="text-sm font-bold text-muted">{i + 1}/{steps.length}</span>
-      </div>
-
-      <div className="flex-1 py-6">
-        <StepView key={i} step={step} locked={!!verdict}
-          onAnswer={(ok, msg) => { if (!ok) setMistakes((m) => m + 1); setVerdict({ ok, msg }); }}
-          onContinue={next}
-          coach={() => {
-            if (!spendAi()) return null;
-            return coachHint(step);
-          }}
-          aiLeft={p.plan === "pro" ? null : p.aiLeft}
-        />
-      </div>
-
+    <Shell progress={progress} back={`/parcours/${journey.id}`} combo={combo} timeLeft={timeLeft} pulse={pulse} xp={xp}
+      sound={sound} toggleSound={() => update({ sound: !sound })} label={`${TYPE_LABEL[node.type]} · ${node.title}`}>
+      <StepView key={pos} step={step} locked={!!verdict} sound={sound} onAnswer={answer} onContinue={next}
+        coach={() => (spendAi() ? coachHint(step) : null)} aiLeft={p.plan === "pro" ? null : p.aiLeft} />
       {verdict && (
-        <div className={`sticky bottom-0 -mx-4 mb-0 border-t-2 px-4 py-5 ${verdict.ok ? "border-good bg-[#e3f3ea]" : "border-bad bg-[#f9e4df]"}`}>
-          <p className={`font-display text-xl font-extrabold ${verdict.ok ? "text-good" : "text-bad"}`}>{verdict.ok ? "Excellent !" : "Pas tout à fait"}</p>
-          <p className="mt-1 whitespace-pre-wrap text-ink">{verdict.msg}</p>
-          <button className="btn-primary mt-4 w-full" onClick={next}>Continuer</button>
+        <div className={`anim-rise fixed inset-x-0 bottom-0 z-30 border-t px-4 pb-6 pt-5 backdrop-blur-xl ${verdict.ok ? "border-good/50 bg-[#0f2219]/95" : "border-bad/50 bg-[#2a1015]/95"}`}>
+          <div className="mx-auto max-w-2xl">
+            <p className={`font-display text-xl font-extrabold ${verdict.ok ? "text-good" : "text-bad"}`}>
+              {verdict.ok ? (combo >= 3 ? `Combo ×${combo} ! 🔥` : ["Excellent !", "Bien joué !", "Parfait !", "Bravo !"][pos % 4]) : "Pas tout à fait"}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-text/90">{verdict.msg}</p>
+            <button autoFocus className={`mt-4 w-full ${verdict.ok ? "btn-primary" : "btn bg-bad text-white"}`} onClick={next}>Continuer</button>
+          </div>
         </div>
       )}
+    </Shell>
+  );
+}
+
+function Tile({ label, value, color, delay }: { label: string; value: string; color: string; delay: number }) {
+  return (
+    <div className="card anim-pop p-3" style={{ animationDelay: `${delay}ms` }}>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted">{label}</p>
+      <p className={`font-display text-2xl font-extrabold ${color}`}>{value}</p>
     </div>
   );
 }
 
-// Coach simulé pour le prototype : à brancher sur une vraie IA (API Claude) côté serveur.
+function Shell({ children, progress, back, combo, timeLeft, pulse = 0, xp, sound, toggleSound, label }: {
+  children: React.ReactNode; progress: number; back: string; combo: number; timeLeft: number | null;
+  pulse?: number; xp?: number; sound?: boolean; toggleSound?: () => void; label?: string;
+}) {
+  return (
+    <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pb-48">
+      <div className="sticky top-0 z-20 -mx-4 bg-bg/80 px-4 pb-3 pt-4 backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <Link href={back} aria-label="Quitter" className="flex h-9 w-9 items-center justify-center rounded-full border border-line text-xl text-muted hover:text-text">×</Link>
+          <div className="h-3 flex-1 overflow-hidden rounded-full bg-surface-2">
+            <div className="grad h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(4, progress * 100)}%` }} />
+          </div>
+          {combo >= 2 && <span key={combo} className="anim-pop rounded-full bg-orange/15 px-2.5 py-1 text-sm font-extrabold text-orange">🔥×{combo}</span>}
+          {timeLeft !== null && (
+            <span className={`rounded-full px-2.5 py-1 font-mono text-sm font-bold ${timeLeft <= 15 ? "anim-wobble bg-bad/20 text-bad" : "bg-surface-2 text-text"}`}>⏱ {timeLeft}s</span>
+          )}
+          {toggleSound && (
+            <button onClick={toggleSound} aria-label={sound ? "Couper le son" : "Activer le son"} className="text-lg text-muted">{sound ? "🔊" : "🔇"}</button>
+          )}
+        </div>
+        {label && (
+          <div className="relative mt-2 flex items-center justify-between text-xs text-muted">
+            <span className="truncate">{label}</span>
+            {xp !== undefined && <span className="font-bold text-[#ffd15c]">⭐ {xp} XP</span>}
+            {pulse > 0 && <span key={pulse} className="anim-xp absolute right-0 top-0 font-display font-extrabold text-[#ffd15c]">+XP</span>}
+          </div>
+        )}
+      </div>
+      <div className="flex-1 pt-6">{children}</div>
+    </div>
+  );
+}
+
+// Coach simulé pour le prototype : à brancher sur une vraie IA côté serveur.
 function coachHint(step: Step): string {
   switch (step.kind) {
-    case "choice": return "Élimine d'abord la réponse qui te paraît la moins logique, puis vérifie chaque proposition sur l'exemple.";
-    case "number": return `Écris la formule utile, remplace par les valeurs, puis calcule étape par étape.${step.unit ? ` Ta réponse s'exprime en ${step.unit}.` : ""}`;
-    case "code": return "Relis l'énoncé mot à mot : la sortie doit être exactement identique, majuscules et espaces compris. Pense à console.log(...).";
+    case "choice": return "Élimine d'abord la réponse la moins logique, puis teste chaque proposition sur un exemple.";
+    case "number": return `Écris la formule utile, remplace par les valeurs, puis calcule étape par étape.${step.unit ? ` Réponse en ${step.unit}.` : ""}`;
+    case "code": return "La sortie doit être exactement identique, majuscules et espaces compris. Pense à console.log(...).";
+    case "order": return "Cherche d'abord la toute première étape : celle qui ne dépend d'aucune autre.";
+    case "match": return "Commence par la paire dont tu es le plus sûr, les autres deviendront plus évidentes.";
+    case "fill": return "Lis la phrase entière à voix haute avec chaque option : une seule sonne juste.";
     default: return "";
   }
 }
 
-function Blocker({ title, text }: { title: string; text: string }) {
+function Blocker({ icon, title, text, back, retry }: { icon: string; title: string; text: string; back: string; retry?: () => void }) {
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
-      <div className="text-6xl">⚡</div>
+    <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
+      <div className="anim-pop grad flex h-24 w-24 items-center justify-center rounded-full text-5xl">{icon}</div>
       <h1 className="font-display text-3xl font-extrabold">{title}</h1>
       <p className="text-muted">{text}</p>
-      <Link href="/tarifs" className="btn-primary w-full">Voir les offres</Link>
-      <Link href="/apprendre" className="font-semibold text-muted">Retour</Link>
+      {retry ? <button className="btn-primary w-full" onClick={retry}>Réessayer</button> : <Link href="/tarifs" className="btn-primary w-full">Voir les offres</Link>}
+      <Link href={back} className="font-semibold text-muted">Retour au parcours</Link>
     </div>
   );
 }
 
-function StepView({ step, locked, onAnswer, onContinue, coach, aiLeft }: {
-  step: Step; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; onContinue: () => void;
+function shuffle<T>(a: T[], seed: number) {
+  const r = [...a];
+  let s = seed;
+  for (let i = r.length - 1; i > 0; i--) {
+    s = (s * 9301 + 49297) % 233280;
+    const j = Math.floor((s / 233280) * (i + 1));
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  // évite de présenter la bonne réponse déjà triée
+  return r.join("|") === a.join("|") && r.length > 1 ? [...r.slice(1), r[0]] : r;
+}
+
+function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: {
+  step: Step; locked: boolean; sound: boolean; onAnswer: (ok: boolean, msg: string) => void; onContinue: () => void;
   coach: () => string | null; aiLeft: number | null;
 }) {
-  const [choice, setChoice] = useState<number | null>(null);
-  const [value, setValue] = useState("");
-  const [code, setCode] = useState(step.kind === "code" ? step.starter : "");
-  const [out, setOut] = useState<{ output: string; error?: string } | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [shake, setShake] = useState(0);
+  const tap = () => sound && sfx.tap();
+  const fail = (msg: string) => { setShake((n) => n + 1); onAnswer(false, msg); };
 
-  const askCoach = (
+  const coachUi = step.kind !== "explain" && (
     <div className="mt-6">
       {hint ? (
-        <div className="rounded-xl border-2 border-brand/30 bg-brand-soft p-4 text-sm"><b>Coach IA :</b> {hint}</div>
+        <div className="anim-rise flex gap-3 rounded-2xl border border-orange/30 bg-orange/10 p-4 text-sm">
+          <span className="grad flex h-8 w-8 shrink-0 items-center justify-center rounded-full">✦</span>
+          <p><b className="text-orange">Coach IA</b><br />{hint}</p>
+        </div>
       ) : (
-        <button disabled={locked} className="text-sm font-bold text-brand disabled:opacity-40"
-          onClick={() => setHint(coach() ?? "Tu as utilisé tes questions au coach pour aujourd'hui. Passe à Pro pour un coach illimité.")}>
-          💡 Demander un indice au coach{aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
+        <button disabled={locked} className="text-sm font-bold text-orange disabled:opacity-40"
+          onClick={() => setHint(coach() ?? "Tu as utilisé tes indices du jour. Passe à Pro pour un coach illimité.")}>
+          ✦ Demander un indice{aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
         </button>
       )}
     </div>
   );
 
-  if (step.kind === "explain")
-    return (
-      <div>
-        <h2 className="font-display text-3xl font-extrabold">{step.title}</h2>
-        <p className="mt-4 text-lg leading-relaxed">{step.body}</p>
-        {step.math && <div className="card mt-6 p-4 text-center"><Math tex={step.math} /></div>}
-        <button className="btn-primary mt-8 w-full" onClick={onContinue}>J&apos;ai compris</button>
-      </div>
-    );
+  const wrap = (body: React.ReactNode) => <div key={shake} className={shake ? "anim-shake" : "anim-rise"}>{body}{coachUi}</div>;
 
-  if (step.kind === "choice")
-    return (
-      <div>
-        <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
-        {step.math && <Math tex={step.math} />}
-        <div className="mt-6 grid gap-3">
-          {step.options.map((o, k) => {
-            const state = locked ? (k === step.answer ? "border-good bg-good/10" : k === choice ? "border-bad bg-bad/10" : "") : k === choice ? "border-brand bg-brand-soft" : "";
-            return (
-              <button key={k} disabled={locked} onClick={() => setChoice(k)}
-                className={`card px-4 py-3 text-left font-semibold transition hover:border-ink/30 ${state}`}>{o}</button>
-            );
-          })}
+  switch (step.kind) {
+    case "explain":
+      return (
+        <div className="anim-rise">
+          <span className="pill">Nouvelle notion</span>
+          <h2 className="mt-3 font-display text-3xl font-extrabold">{step.title}</h2>
+          <p className="mt-4 text-lg leading-relaxed text-text/90">{step.body}</p>
+          {step.math && <div className="card-hot mt-6 p-4 text-center"><MathTex tex={step.math} /></div>}
+          {step.code && <CodeBlock code={step.code} />}
+          <button className="btn-primary mt-8 w-full text-lg" onClick={onContinue}>J&apos;ai compris</button>
         </div>
-        {!locked && <button className="btn-primary mt-6 w-full" disabled={choice === null}
-          onClick={() => onAnswer(choice === step.answer, step.why)}>Vérifier</button>}
-        {askCoach}
-      </div>
-    );
-
-  if (step.kind === "number")
-    return (
-      <div>
-        <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
-        {step.math && <Math tex={step.math} />}
-        <div className="mt-6 flex items-center gap-3">
-          <input inputMode="decimal" disabled={locked} value={value} onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && value && !locked && check()}
-            className="card w-40 px-4 py-3 text-xl font-bold outline-none focus:border-brand" placeholder="?" />
-          {step.unit && <span className="text-lg font-semibold text-muted">{step.unit}</span>}
-        </div>
-        {!locked && <button className="btn-primary mt-6 w-full" disabled={!value} onClick={check}>Vérifier</button>}
-        {askCoach}
-      </div>
-    );
-
-  function check() {
-    if (step.kind !== "number") return;
-    const n = parseFloat(value.replace(",", ".").replace(/\s/g, ""));
-    const ok = !Number.isNaN(n) && globalThis.Math.abs(n - step.answer) <= step.tolerance;
-    onAnswer(ok, step.why);
+      );
+    case "choice":
+      return wrap(<Choice step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
+    case "number":
+      return wrap(<NumberQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
+    case "order":
+      return wrap(<Order step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
+    case "match":
+      return wrap(<Match step={step} locked={locked} sound={sound} onAnswer={onAnswer} />);
+    case "fill":
+      return wrap(<Fill step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
+    case "code":
+      return wrap(<CodeQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
   }
+}
 
-  // code
+function CodeBlock({ code }: { code: string }) {
+  return <pre className="mt-6 overflow-x-auto rounded-2xl border border-line bg-[#0e0a09] p-4 font-mono text-sm text-[#ffd0a8]">{code}</pre>;
+}
+
+type QProps<K extends Step["kind"]> = { step: Extract<Step, { kind: K }>; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; fail: (msg: string) => void; tap?: () => void };
+
+function Choice({ step, locked, tap, onAnswer, fail }: QProps<"choice">) {
+  const [choice, setChoice] = useState<number | null>(null);
   return (
-    <div>
+    <>
       <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
-      <div className="mt-4 overflow-hidden rounded-2xl border-2 border-ink bg-[#1d1a2e]">
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-2 text-xs font-semibold text-white/60">
-          <span>main.js</span><span>JavaScript</span>
+      {step.math && <MathTex tex={step.math} />}
+      {step.code && <CodeBlock code={step.code} />}
+      <div className="mt-6 grid gap-3">
+        {step.options.map((o, k) => {
+          const st = locked
+            ? k === step.answer ? "border-good bg-good/15 text-good" : k === choice ? "border-bad bg-bad/15 text-bad" : "opacity-50"
+            : k === choice ? "border-orange bg-orange/15 scale-[1.01]" : "hover:border-orange/40";
+          return (
+            <button key={k} disabled={locked} onClick={() => { tap?.(); setChoice(k); }}
+              className={`flex items-center gap-3 rounded-2xl border-2 border-line bg-surface-2 px-4 py-3.5 text-left font-semibold transition ${st}`}>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line text-xs text-muted">{String.fromCharCode(65 + k)}</span>{o}
+            </button>
+          );
+        })}
+      </div>
+      {!locked && <button className="btn-primary mt-6 w-full" disabled={choice === null}
+        onClick={() => (choice === step.answer ? onAnswer(true, step.why) : fail(step.why))}>Vérifier</button>}
+    </>
+  );
+}
+
+function NumberQ({ step, locked, onAnswer, fail }: QProps<"number">) {
+  const [value, setValue] = useState("");
+  const check = () => {
+    const n = parseFloat(value.replace(",", ".").replace(/\s/g, ""));
+    const ok = !Number.isNaN(n) && Math.abs(n - step.answer) <= step.tolerance;
+    if (ok) onAnswer(true, step.why); else fail(step.why);
+  };
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      {step.math && <div className="card-hot mt-4 p-3 text-center"><MathTex tex={step.math} /></div>}
+      <div className="mt-6 flex items-center gap-3">
+        <input autoFocus inputMode="decimal" disabled={locked} value={value} onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && value && !locked && check()}
+          className="w-44 rounded-2xl border-2 border-line bg-surface-2 px-4 py-3 text-2xl font-bold outline-none transition focus:border-orange" placeholder="?" />
+        {step.unit && <span className="text-lg font-semibold text-muted">{step.unit}</span>}
+      </div>
+      {!locked && <button className="btn-primary mt-6 w-full" disabled={!value} onClick={check}>Vérifier</button>}
+    </>
+  );
+}
+
+function Order({ step, locked, tap, onAnswer, fail }: QProps<"order">) {
+  const pool = useMemo(() => shuffle(step.items.map((_, i) => i), step.items.length * 7 + 3), [step]);
+  const [picked, setPicked] = useState<number[]>([]);
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <p className="mt-1 text-sm text-muted">Touche les éléments dans le bon ordre. Touche une ligne placée pour la retirer.</p>
+      <ol className="mt-5 min-h-24 space-y-2 rounded-2xl border-2 border-dashed border-line p-3">
+        {picked.length === 0 && <li className="py-6 text-center text-sm text-muted">Ta réponse s&apos;affiche ici</li>}
+        {picked.map((i, k) => (
+          <li key={i}>
+            <button disabled={locked} onClick={() => { tap?.(); setPicked(picked.filter((x) => x !== i)); }}
+              className="anim-pop flex w-full items-center gap-3 rounded-xl border border-orange/40 bg-orange/10 px-3 py-2.5 text-left font-mono text-sm">
+              <span className="grad flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-bold text-white">{k + 1}</span>{step.items[i]}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {pool.filter((i) => !picked.includes(i)).map((i) => (
+          <button key={i} disabled={locked} onClick={() => { tap?.(); setPicked([...picked, i]); }}
+            className="rounded-xl border-2 border-line bg-surface-2 px-3 py-2.5 font-mono text-sm transition hover:-translate-y-0.5 hover:border-orange/50">{step.items[i]}</button>
+        ))}
+      </div>
+      {!locked && <button className="btn-primary mt-6 w-full" disabled={picked.length !== step.items.length}
+        onClick={() => (picked.every((v, k) => v === k) ? onAnswer(true, step.why) : fail(`Ordre attendu :\n${step.items.map((x, k) => `${k + 1}. ${x}`).join("\n")}`))}>Vérifier</button>}
+    </>
+  );
+}
+
+function Match({ step, locked, sound, onAnswer }: { step: Extract<Step, { kind: "match" }>; locked: boolean; sound: boolean; onAnswer: (ok: boolean, msg: string) => void }) {
+  const right = useMemo(() => shuffle(step.pairs.map((_, i) => i), step.pairs.length * 13 + 1), [step]);
+  const [left, setLeft] = useState<number | null>(null);
+  const [matched, setMatched] = useState<number[]>([]);
+  const [wrong, setWrong] = useState<number | null>(null);
+  const [errors, setErrors] = useState(0);
+
+  function pickRight(i: number) {
+    if (left === null || locked) return;
+    if (i === left) {
+      const m = [...matched, i];
+      setMatched(m);
+      setLeft(null);
+      if (sound) sfx.tap();
+      if (m.length === step.pairs.length) setTimeout(() => onAnswer(errors === 0, errors === 0 ? step.why : `${errors} erreur${errors > 1 ? "s" : ""} d'association. ${step.why}`), 250);
+    } else {
+      setWrong(i);
+      setErrors((e) => e + 1);
+      if (sound) sfx.bad();
+      setTimeout(() => setWrong(null), 450);
+    }
+  }
+  const cls = (on: boolean, done: boolean, bad: boolean) =>
+    `w-full rounded-xl border-2 px-3 py-3 text-sm font-semibold transition ${done ? "border-good/50 bg-good/10 text-good opacity-60" : bad ? "anim-shake border-bad bg-bad/15" : on ? "border-orange bg-orange/15 scale-[1.03]" : "border-line bg-surface-2 hover:border-orange/40"}`;
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <p className="mt-1 text-sm text-muted">Touche un élément à gauche, puis son partenaire à droite.</p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          {step.pairs.map(([a], i) => (
+            <button key={i} disabled={matched.includes(i) || locked} onClick={() => { setLeft(i); if (sound) sfx.tap(); }} className={cls(left === i, matched.includes(i), false)}>{a}</button>
+          ))}
+        </div>
+        <div className="space-y-2">
+          {right.map((i) => (
+            <button key={i} disabled={matched.includes(i) || locked} onClick={() => pickRight(i)} className={cls(false, matched.includes(i), wrong === i)}>{step.pairs[i][1]}</button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Fill({ step, locked, tap, onAnswer, fail }: QProps<"fill">) {
+  const parts = step.text.split("___");
+  const [vals, setVals] = useState<(string | null)[]>(() => step.answer.map(() => null));
+  const nextEmpty = vals.findIndex((v) => v === null);
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <p className="card mt-5 p-5 text-lg leading-[2.4]">
+        {parts.map((t, k) => (
+          <span key={k}>
+            {t}
+            {k < parts.length - 1 && (
+              <button disabled={locked} onClick={() => { tap?.(); setVals(vals.map((v, i) => (i === k ? null : v))); }}
+                className={`mx-1 inline-flex min-w-20 justify-center rounded-lg border-b-4 px-2 align-middle font-bold leading-8 transition ${vals[k] ? "anim-pop border-orange bg-orange/15 text-orange" : k === nextEmpty ? "border-orange/60 bg-surface-2" : "border-line bg-surface-2"}`}>
+                {vals[k] ?? " "}
+              </button>
+            )}
+          </span>
+        ))}
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {step.options.map((o) => (
+          <button key={o} disabled={locked || nextEmpty === -1} onClick={() => { tap?.(); setVals(vals.map((v, i) => (i === nextEmpty ? o : v))); }}
+            className="rounded-xl border-2 border-line bg-surface-2 px-4 py-2.5 font-semibold transition hover:-translate-y-0.5 hover:border-orange/50">{o}</button>
+        ))}
+      </div>
+      {!locked && <button className="btn-primary mt-6 w-full" disabled={nextEmpty !== -1}
+        onClick={() => (vals.every((v, i) => v === step.answer[i]) ? onAnswer(true, step.why) : fail(`Réponse : ${step.answer.join(", ")}. ${step.why}`))}>Vérifier</button>}
+    </>
+  );
+}
+
+function CodeQ({ step, locked, onAnswer, fail }: QProps<"code">) {
+  const [code, setCode] = useState(step.starter);
+  const [out, setOut] = useState<{ output: string; error?: string } | null>(null);
+  const [running, setRunning] = useState(false);
+  const run = async () => { setRunning(true); const r = await runJs(code); setOut(r); setRunning(false); return r; };
+  return (
+    <>
+      <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
+      <div className="mt-4 overflow-hidden rounded-2xl border border-orange/30 bg-[#0e0a09] shadow-[0_20px_40px_-25px_rgba(255,90,40,0.6)]">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs font-semibold text-muted">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" /><span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" /><span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+          <span className="ml-2">main.js</span>
         </div>
         <textarea spellCheck={false} disabled={locked} value={code} onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => {
@@ -216,24 +481,22 @@ function StepView({ step, locked, onAnswer, onContinue, coach, aiLeft }: {
               requestAnimationFrame(() => t.setSelectionRange(s + 2, s + 2));
             }
           }}
-          className="h-48 w-full resize-y bg-transparent p-4 font-mono text-sm text-[#f3eedf] outline-none" />
+          className="h-48 w-full resize-y bg-transparent p-4 font-mono text-sm leading-6 text-[#ffd0a8] caret-orange outline-none" />
       </div>
-      <div className="mt-3 min-h-16 rounded-xl border-2 border-line bg-card p-3 font-mono text-sm">
-        <p className="mb-1 text-xs font-bold uppercase text-muted">Console</p>
-        {out ? <pre className={out.error ? "text-bad" : ""}>{out.output}{out.error ? `\n${out.error}` : ""}</pre> : <span className="text-muted">Lance ton code pour voir le résultat.</span>}
+      <div className="mt-3 rounded-2xl border border-line bg-surface p-3 font-mono text-sm">
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted">Console</p>
+        {out ? <pre className={`whitespace-pre-wrap ${out.error ? "text-bad" : "text-good"}`}>{out.output}{out.error ? `\n${out.error}` : ""}</pre> : <span className="text-muted">Lance ton code pour voir le résultat.</span>}
       </div>
       {!locked && (
         <div className="mt-6 grid grid-cols-2 gap-3">
-          <button className="btn-ghost" onClick={async () => setOut(await runJs(code))}>▶ Exécuter</button>
-          <button className="btn-primary" onClick={async () => {
-            const r = await runJs(code);
-            setOut(r);
+          <button className="btn-ghost" disabled={running} onClick={run}>▶ Exécuter</button>
+          <button className="btn-primary" disabled={running} onClick={async () => {
+            const r = await run();
             const ok = !r.error && r.output.trim() === step.expectedOutput.trim();
-            onAnswer(ok, ok ? "Ton code produit exactement la sortie attendue." : `Sortie attendue :\n${step.expectedOutput}\n\nUne solution possible :\n${step.why}`);
+            if (ok) onAnswer(true, "Ton code produit exactement la sortie attendue."); else fail(`Sortie attendue :\n${step.expectedOutput}\n\nPiste de solution :\n${step.why}`);
           }}>Vérifier</button>
         </div>
       )}
-      {askCoach}
-    </div>
+    </>
   );
 }

@@ -33,13 +33,13 @@ export default function Pricing() {
     <main className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5">
         <Logo />
-        <Link href="/apprendre" className="text-sm font-semibold text-muted hover:text-ink">Retour aux leçons</Link>
+        <Link href="/apprendre" className="text-sm font-semibold text-muted hover:text-text">Retour aux leçons</Link>
       </header>
 
       <div className="mx-auto max-w-6xl px-4 pb-20">
         {cancelled && !dismissed && (
-          <div role="status" className="mx-auto mb-8 flex max-w-3xl items-start gap-4 rounded-2xl border-2 border-gold bg-[#fbf0cf] p-5">
-            <span className="text-2xl">↩︎</span>
+          <div role="status" className="mx-auto mb-8 flex max-w-3xl items-start gap-4 rounded-2xl border border-[#ffd15c]/50 bg-[#ffd15c]/10 p-5">
+            <span className="text-2xl text-[#ffd15c]">↩︎</span>
             <div className="flex-1">
               <p className="font-bold">Paiement annulé, aucun montant n&apos;a été débité.</p>
               <p className="mt-1 text-sm text-muted">Tu restes sur l&apos;offre gratuite et ta progression est intacte. Tu peux réessayer quand tu veux.</p>
@@ -48,18 +48,18 @@ export default function Pricing() {
           </div>
         )}
         {success && (
-          <div role="status" className="mx-auto mb-8 max-w-3xl rounded-2xl border-2 border-good bg-[#e3f3ea] p-5">
+          <div role="status" className="mx-auto mb-8 max-w-3xl rounded-2xl border border-good/50 bg-good/10 p-5">
             <p className="font-bold text-good">Bienvenue dans l&apos;offre {p.plan === "pro" ? "Pro" : "Plus"} ! 🎉</p>
             <p className="mt-1 text-sm">Tout est débloqué. <Link href="/apprendre" className="font-bold underline">Reprendre mes leçons</Link></p>
           </div>
         )}
 
         <div className="text-center">
-          <h1 className="font-display text-4xl font-extrabold md:text-5xl">Apprends sans limite</h1>
+          <h1 className="font-display text-4xl font-extrabold md:text-5xl">Apprends <span className="grad-text">sans limite</span></h1>
           <p className="mt-3 text-lg text-muted">Commence gratuitement, passe à la vitesse supérieure quand tu veux.</p>
-          <div className="mt-6 inline-flex rounded-xl border-2 border-line bg-card p-1 text-sm font-bold">
-            <button onClick={() => setYearly(false)} className={`rounded-lg px-4 py-2 ${!yearly ? "bg-ink text-white" : "text-muted"}`}>Mensuel</button>
-            <button onClick={() => setYearly(true)} className={`rounded-lg px-4 py-2 ${yearly ? "bg-ink text-white" : "text-muted"}`}>Annuel <span className="text-good">jusqu&apos;à −50 %</span></button>
+          <div className="mt-6 inline-flex rounded-2xl border border-line bg-surface p-1 text-sm font-bold">
+            <button onClick={() => setYearly(false)} className={`rounded-lg px-4 py-2 ${!yearly ? "grad text-white" : "text-muted"}`}>Mensuel</button>
+            <button onClick={() => setYearly(true)} className={`rounded-lg px-4 py-2 ${yearly ? "grad text-white" : "text-muted"}`}>Annuel <span className="text-[#ffd15c]">jusqu&apos;à −50 %</span></button>
           </div>
         </div>
 
@@ -68,8 +68,8 @@ export default function Pricing() {
             const current = p.plan === pl.id;
             const price = yearly ? pl.year / 12 : pl.month;
             return (
-              <div key={pl.id} className={`card relative flex flex-col p-6 ${pl.highlight ? "border-brand shadow-[6px_6px_0_var(--brand)]" : ""}`}>
-                {pl.highlight && <span className="absolute -top-3 left-6 rounded-full bg-brand px-3 py-1 text-xs font-bold text-white">Le plus choisi</span>}
+              <div key={pl.id} className={`card relative flex flex-col p-6 ${pl.highlight ? "card-hot md:-translate-y-3" : ""}`}>
+                {pl.highlight && <span className="absolute -top-3 left-6 rounded-full grad px-3 py-1 text-xs font-bold text-white">Le plus choisi</span>}
                 <h2 className="font-display text-2xl font-extrabold">{pl.name}</h2>
                 <p className="text-sm text-muted">{pl.pitch}</p>
                 <p className="mt-5">
