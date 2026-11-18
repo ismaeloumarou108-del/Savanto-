@@ -14,12 +14,13 @@ Si l'élève a fait une tentative, pointe gentiment l'endroit précis où il se 
 
 function describe(step: Step): string {
   switch (step.kind) {
-    case "choice": return `QCM : ${step.prompt}${step.math ? ` [${step.math}]` : ""}${step.code ? `\n${step.code}` : ""}\nOptions : ${step.options.join(" | ")}\nBonne réponse : ${step.options[step.answer]}. Explication : ${step.why}`;
+    case "choice": return `QCM : ${step.prompt}${step.sign ? ` (panneau : ${step.sign})` : ""}${step.scene ? ` (situation : ${step.scene})` : ""}${step.math ? ` [${step.math}]` : ""}${step.code ? `\n${step.code}` : ""}\nOptions : ${step.options.join(" | ")}\nBonne réponse : ${step.options[step.answer]}. Explication : ${step.why}`;
     case "number": return `Question numérique : ${step.prompt}${step.math ? ` [${step.math}]` : ""}\nRéponse attendue : ${step.answer}${step.unit ? ` ${step.unit}` : ""}. Explication : ${step.why}`;
     case "code": return `Exercice de code JavaScript : ${step.prompt}\nCode de départ :\n${step.starter}\nSortie attendue :\n${step.expectedOutput}\nSolution possible : ${step.why}`;
     case "order": return `Remettre dans l'ordre : ${step.prompt}\nOrdre correct : ${step.items.join(" → ")}`;
     case "match": return `Associer : ${step.prompt}\nPaires correctes : ${step.pairs.map(([a, b]) => `${a} = ${b}`).join(" ; ")}`;
     case "fill": return `Texte à trous : ${step.text}\nOptions : ${step.options.join(", ")}\nRéponses : ${step.answer.join(", ")}`;
+    case "listen": return `Écoute (langue ${step.say.lang}) : l'élève entend « ${step.say.text} » et doit choisir parmi ${step.options.join(" | ")}. Bonne réponse : ${step.options[step.answer]}.`;
     default: return "Explication";
   }
 }

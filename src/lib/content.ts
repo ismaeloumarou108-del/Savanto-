@@ -2,9 +2,17 @@
 // Parcours > chapitres > étapes de la carte (leçon, pratique, défi, boss, coffre).
 // Chaque leçon = une suite d'écrans très courts, avec une fiche mémo à la fin.
 
+import type { SceneId, SignId } from "@/components/RoadSign";
+import { ROUTE } from "./subjects/route";
+import { LANGUES } from "./subjects/langues";
+
+export type Say = { text: string; lang: string }; // lu à voix haute (synthèse vocale du navigateur)
+type Visual = { sign?: SignId; scene?: SceneId; say?: Say };
+
 export type Step =
-  | { kind: "explain"; title: string; body: string; math?: string; code?: string }
-  | { kind: "choice"; prompt: string; math?: string; code?: string; options: string[]; answer: number; why: string }
+  | ({ kind: "explain"; title: string; body: string; math?: string; code?: string } & Visual)
+  | ({ kind: "choice"; prompt: string; math?: string; code?: string; options: string[]; answer: number; why: string } & Visual)
+  | { kind: "listen"; prompt: string; say: Say; options: string[]; answer: number; why: string }
   | { kind: "number"; prompt: string; math?: string; answer: number; tolerance: number; unit?: string; why: string }
   | { kind: "code"; prompt: string; starter: string; expectedOutput: string; why: string }
   | { kind: "order"; prompt: string; items: string[]; why: string } // items dans le bon ordre, mélangés à l'affichage
@@ -23,13 +31,14 @@ export type MapNode = {
   steps?: Step[];
   memo?: string[];
   timeLimit?: number; // secondes, pour les boss
+  maxMistakes?: number; // erreurs tolérées pour réussir un boss (1 par défaut)
 };
 
 export type Chapter = { id: string; title: string; nodes: MapNode[] };
 export type Journey = { id: string; title: string; level: string; description: string; chapters: Chapter[] };
 export type Subject = { id: string; title: string; icon: string; tint: string; blurb: string; journeys: Journey[] };
 
-const chest = (id: string): MapNode => ({ id, type: "coffre", title: "Coffre" });
+export const chest = (id: string): MapNode => ({ id, type: "coffre", title: "Coffre" });
 
 export const SUBJECTS: Subject[] = [
   {
@@ -392,6 +401,8 @@ export const SUBJECTS: Subject[] = [
     ],
   },
 ];
+
+SUBJECTS.push(ROUTE, LANGUES);
 
 export const ALL_JOURNEYS = SUBJECTS.flatMap((s) => s.journeys.map((j) => ({ subject: s, journey: j })));
 

@@ -22,7 +22,7 @@ export default function Home() {
             Apprendre devient <span className="grad-text">un jeu</span>.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-muted">
-            Maths, physique-chimie, programmation, SVT : des parcours en mini-leçons de 5 minutes, des défis, des coffres à ouvrir,
+            Maths, physique-chimie, code, SVT, code de la route, langues : des parcours en mini-leçons de 5 minutes, des défis, des coffres à ouvrir,
             des combos et une ligue chaque semaine. Tu ne verras pas le temps passer.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
@@ -41,7 +41,7 @@ export default function Home() {
       <section className="mx-auto max-w-6xl px-4 pb-16">
         <p className="label">Parcours</p>
         <h2 className="mt-2 font-display text-3xl font-extrabold">Une carte à explorer, pas un manuel</h2>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {SUBJECTS.map((s) => (
             <Link key={s.id} href="/parcours" className="card group p-5 transition hover:-translate-y-1 hover:border-orange/50">
               <span className="grad flex h-12 w-12 items-center justify-center rounded-2xl font-display text-lg font-bold text-white transition group-hover:rotate-6">{s.icon}</span>
