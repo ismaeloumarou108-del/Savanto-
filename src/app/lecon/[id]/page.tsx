@@ -150,7 +150,7 @@ export default function LessonPage() {
     <Shell progress={progress} back={`/parcours/${journey.id}`} combo={combo} timeLeft={timeLeft} pulse={pulse} xp={xp}
       sound={sound} toggleSound={() => update({ sound: !sound })} label={`${TYPE_LABEL[node.type]} · ${node.title}`}>
       <StepView key={pos} step={step} locked={!!verdict} sound={sound} onAnswer={answer} onContinue={next}
-        coach={() => (spendAi() ? coachHint(step) : null)} aiLeft={p.plan === "pro" ? null : p.aiLeft} />
+        coach={(attempt) => askCoach(step, attempt, spendAi)} aiLeft={p.plan === "pro" ? null : p.aiLeft} />
       {verdict && (
         <div className={`anim-rise fixed inset-x-0 bottom-0 z-30 border-t px-4 pb-6 pt-5 backdrop-blur-xl ${verdict.ok ? "border-good/50 bg-[#0f2219]/95" : "border-bad/50 bg-[#2a1015]/95"}`}>
           <div className="mx-auto max-w-2xl">
@@ -209,6 +209,22 @@ function Shell({ children, progress, back, combo, timeLeft, pulse = 0, xp, sound
 }
 
 // Coach simulé pour le prototype : à brancher sur une vraie IA côté serveur.
+const QUOTA_MSG = "Tu as utilisé tes indices du jour. Passe à Pro pour un coach illimité.";
+
+// Demande un indice au vrai coach IA ; repli sur un indice générique si l'IA n'est pas configurée.
+async function askCoach(step: Step, attempt: string | undefined, spendAi: () => boolean): Promise<string> {
+  if (!spendAi()) return QUOTA_MSG;
+  try {
+    const r = await fetch("/api/coach", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step, attempt }) });
+    if (r.ok) {
+      const { hint } = (await r.json()) as { hint?: string };
+      if (hint) return hint;
+    }
+    if (r.status === 429) return QUOTA_MSG;
+  } catch {}
+  return coachHint(step);
+}
+
 function coachHint(step: Step): string {
   switch (step.kind) {
     case "choice": return "Élimine d'abord la réponse la moins logique, puis teste chaque proposition sur un exemple.";
@@ -247,9 +263,11 @@ function shuffle<T>(a: T[], seed: number) {
 
 function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: {
   step: Step; locked: boolean; sound: boolean; onAnswer: (ok: boolean, msg: string) => void; onContinue: () => void;
-  coach: () => string | null; aiLeft: number | null;
+  coach: (attempt?: string) => Promise<string>; aiLeft: number | null;
 }) {
   const [hint, setHint] = useState<string | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const draft = useRef<string | undefined>(undefined);
   const [shake, setShake] = useState(0);
   const tap = () => sound && sfx.tap();
   const fail = (msg: string) => { setShake((n) => n + 1); onAnswer(false, msg); };
@@ -262,9 +280,9 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
           <p><b className="text-orange">Coach IA</b><br />{hint}</p>
         </div>
       ) : (
-        <button disabled={locked} className="text-sm font-bold text-orange disabled:opacity-40"
-          onClick={() => setHint(coach() ?? "Tu as utilisé tes indices du jour. Passe à Pro pour un coach illimité.")}>
-          ✦ Demander un indice{aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
+        <button disabled={locked || thinking} className={`text-sm font-bold text-orange disabled:opacity-40 ${thinking ? "animate-pulse" : ""}`}
+          onClick={async () => { setThinking(true); setHint(await coach(draft.current)); setThinking(false); }}>
+          {thinking ? "✦ Le coach réfléchit…" : "✦ Demander un indice"}{!thinking && aiLeft !== null ? ` (${aiLeft} restant${aiLeft > 1 ? "s" : ""})` : ""}
         </button>
       )}
     </div>
@@ -287,7 +305,7 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
     case "choice":
       return wrap(<Choice step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "number":
-      return wrap(<NumberQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
+      return wrap(<NumberQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} onDraft={(d) => (draft.current = d)} />);
     case "order":
       return wrap(<Order step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "match":
@@ -295,7 +313,7 @@ function StepView({ step, locked, sound, onAnswer, onContinue, coach, aiLeft }: 
     case "fill":
       return wrap(<Fill step={step} locked={locked} tap={tap} onAnswer={onAnswer} fail={fail} />);
     case "code":
-      return wrap(<CodeQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} />);
+      return wrap(<CodeQ step={step} locked={locked} onAnswer={onAnswer} fail={fail} onDraft={(d) => (draft.current = d)} />);
   }
 }
 
@@ -303,7 +321,7 @@ function CodeBlock({ code }: { code: string }) {
   return <pre className="mt-6 overflow-x-auto rounded-2xl border border-line bg-[#0e0a09] p-4 font-mono text-sm text-[#ffd0a8]">{code}</pre>;
 }
 
-type QProps<K extends Step["kind"]> = { step: Extract<Step, { kind: K }>; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; fail: (msg: string) => void; tap?: () => void };
+type QProps<K extends Step["kind"]> = { step: Extract<Step, { kind: K }>; locked: boolean; onAnswer: (ok: boolean, msg: string) => void; fail: (msg: string) => void; tap?: () => void; onDraft?: (d: string) => void };
 
 function Choice({ step, locked, tap, onAnswer, fail }: QProps<"choice">) {
   const [choice, setChoice] = useState<number | null>(null);
@@ -331,7 +349,7 @@ function Choice({ step, locked, tap, onAnswer, fail }: QProps<"choice">) {
   );
 }
 
-function NumberQ({ step, locked, onAnswer, fail }: QProps<"number">) {
+function NumberQ({ step, locked, onAnswer, fail, onDraft }: QProps<"number">) {
   const [value, setValue] = useState("");
   const check = () => {
     const n = parseFloat(value.replace(",", ".").replace(/\s/g, ""));
@@ -343,7 +361,7 @@ function NumberQ({ step, locked, onAnswer, fail }: QProps<"number">) {
       <h2 className="font-display text-2xl font-extrabold">{step.prompt}</h2>
       {step.math && <div className="card-hot mt-4 p-3 text-center"><MathTex tex={step.math} /></div>}
       <div className="mt-6 flex items-center gap-3">
-        <input autoFocus inputMode="decimal" disabled={locked} value={value} onChange={(e) => setValue(e.target.value)}
+        <input autoFocus inputMode="decimal" disabled={locked} value={value} onChange={(e) => { setValue(e.target.value); onDraft?.(e.target.value); }}
           onKeyDown={(e) => e.key === "Enter" && value && !locked && check()}
           className="w-44 rounded-2xl border-2 border-line bg-surface-2 px-4 py-3 text-2xl font-bold outline-none transition focus:border-orange" placeholder="?" />
         {step.unit && <span className="text-lg font-semibold text-muted">{step.unit}</span>}
@@ -459,7 +477,7 @@ function Fill({ step, locked, tap, onAnswer, fail }: QProps<"fill">) {
   );
 }
 
-function CodeQ({ step, locked, onAnswer, fail }: QProps<"code">) {
+function CodeQ({ step, locked, onAnswer, fail, onDraft }: QProps<"code">) {
   const [code, setCode] = useState(step.starter);
   const [out, setOut] = useState<{ output: string; error?: string } | null>(null);
   const [running, setRunning] = useState(false);
@@ -472,7 +490,7 @@ function CodeQ({ step, locked, onAnswer, fail }: QProps<"code">) {
           <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" /><span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" /><span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
           <span className="ml-2">main.js</span>
         </div>
-        <textarea spellCheck={false} disabled={locked} value={code} onChange={(e) => setCode(e.target.value)}
+        <textarea spellCheck={false} disabled={locked} value={code} onChange={(e) => { setCode(e.target.value); onDraft?.(e.target.value); }}
           onKeyDown={(e) => {
             if (e.key === "Tab") {
               e.preventDefault();

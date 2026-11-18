@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { useStore, type Plan } from "@/lib/store";
 
@@ -23,11 +23,38 @@ const FAQ = [
 export default function Pricing() {
   const q = useSearchParams();
   const router = useRouter();
-  const { p } = useStore();
+  const { p, account, reloadAccount } = useStore();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [yearly, setYearly] = useState(true);
   const [dismissed, setDismissed] = useState(false);
   const cancelled = q.get("cancel") === "true";
   const success = q.get("success") === "true";
+
+  // Après un paiement, le webhook Stripe peut prendre quelques secondes : on relit l'offre.
+  useEffect(() => {
+    if (!success || !account) return;
+    let n = 0;
+    const t = setInterval(() => { n++; reloadAccount(); if (n >= 5) clearInterval(t); }, 2000);
+    return () => clearInterval(t);
+  }, [success, account, reloadAccount]);
+
+  async function choose(offre: Plan, periode: "mois" | "an") {
+    setBusy(offre);
+    setError(null);
+    try {
+      const r = await fetch("/api/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ offre, periode }) });
+      if (r.status === 501) return router.push(`/paiement?offre=${offre}&periode=${periode}`); // mode démo
+      if (r.status === 401) return router.push(`/connexion?mode=inscription&next=/tarifs`);
+      const { url } = (await r.json()) as { url?: string };
+      if (url) return (window.location.href = url);
+      setError("Le paiement n'a pas pu démarrer. Réessaie dans un instant.");
+    } catch {
+      setError("Connexion impossible. Vérifie ton réseau et réessaie.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <main className="min-h-screen">
@@ -63,6 +90,7 @@ export default function Pricing() {
           </div>
         </div>
 
+        {error && <p role="alert" className="mx-auto mt-6 max-w-xl rounded-xl bg-bad/10 px-4 py-3 text-center text-sm text-bad">{error}</p>}
         <div className="mt-10 grid gap-6 md:grid-cols-3">
           {PLANS.map((pl) => {
             const current = p.plan === pl.id;
@@ -85,9 +113,9 @@ export default function Pricing() {
                 ) : pl.id === "free" ? (
                   <Link href="/apprendre" className="btn-ghost mt-6">Commencer</Link>
                 ) : (
-                  <Link href={`/paiement?offre=${pl.id}&periode=${yearly ? "an" : "mois"}`} className={`${pl.highlight ? "btn-primary" : "btn-ghost"} mt-6`}>
-                    Choisir {pl.name}
-                  </Link>
+                  <button disabled={busy !== null} onClick={() => choose(pl.id, yearly ? "an" : "mois")} className={`${pl.highlight ? "btn-primary" : "btn-ghost"} mt-6`}>
+                    {busy === pl.id ? "Redirection…" : `Choisir ${pl.name}`}
+                  </button>
                 )}
               </div>
             );

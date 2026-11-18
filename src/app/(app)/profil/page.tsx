@@ -7,7 +7,16 @@ import { levelOf, useStore } from "@/lib/store";
 const PLAN_LABEL = { free: "Gratuit", plus: "Plus", pro: "Pro" } as const;
 
 export default function Profile() {
-  const { p, reset, setPlan, update } = useStore();
+  const { p, reset, setPlan, update, account, online, signOut } = useStore();
+  const [portalBusy, setPortalBusy] = useState(false);
+  async function manage() {
+    setPortalBusy(true);
+    const r = await fetch("/api/portal", { method: "POST" }).catch(() => null);
+    const data = r?.ok ? ((await r.json()) as { url?: string }) : null;
+    setPortalBusy(false);
+    if (data?.url) window.location.href = data.url;
+    else setPlan("free"); // mode démo
+  }
   const [openBadge, setOpenBadge] = useState<string | null>(null);
   const lv = levelOf(p.xp);
   const lessonsDone = p.completed.filter((id) => findNode(id)?.node.type !== "coffre");
@@ -39,8 +48,24 @@ export default function Profile() {
           <p className="text-sm text-muted">Niveau {lv.level} · {lv.into}/{lv.span} XP · Offre {PLAN_LABEL[p.plan]}</p>
         </div>
         {p.plan === "free" ? <Link href="/tarifs" className="btn-primary !py-2.5">Passer à Plus</Link>
-          : <button className="btn-ghost !py-2.5 text-sm" onClick={() => setPlan("free")}>Résilier (démo)</button>}
+          : <button className="btn-ghost !py-2.5 text-sm" disabled={portalBusy} onClick={manage}>{account ? "Gérer mon abonnement" : "Résilier (démo)"}</button>}
       </section>
+
+      {online && (
+        <section className="card flex flex-wrap items-center gap-3 p-4">
+          {account ? (
+            <>
+              <div className="min-w-0 flex-1"><p className="label">Compte</p><p className="truncate font-semibold">{account.email}</p><p className="text-xs text-muted">Progression sauvegardée automatiquement</p></div>
+              <button className="btn-ghost !py-2 text-sm" onClick={signOut}>Se déconnecter</button>
+            </>
+          ) : (
+            <>
+              <div className="flex-1"><p className="font-semibold">Sauvegarde ta progression</p><p className="text-xs text-muted">Crée un compte pour retrouver ta série sur tous tes appareils.</p></div>
+              <Link href="/connexion?mode=inscription&next=/profil" className="btn-primary !py-2 text-sm">Créer un compte</Link>
+            </>
+          )}
+        </section>
+      )}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[["🔥", p.streak, "Série"], ["🏆", p.bestStreak, "Record"], ["⭐", p.xp, "XP total"], ["⚡", `×${p.bestCombo}`, "Combo max"]].map(([i, v, l]) => (

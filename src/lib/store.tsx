@@ -3,7 +3,8 @@
 // Progression de l'élève, stockée localement pour le prototype.
 // À remplacer par Supabase (table profiles + progress) pour la version en ligne.
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { getBrowserSupabase } from "@/lib/supabase/client";
 
 export type Plan = "free" | "plus" | "pro";
 
@@ -113,7 +114,13 @@ type Ctx = {
   update: (patch: Partial<Progress>) => void;
   setPlan: (plan: Plan) => void;
   reset: () => void;
+  account: Account;
+  online: boolean;
+  signOut: () => Promise<void>;
+  reloadAccount: () => Promise<void>;
 };
+
+export type Account = { id: string; email: string } | null;
 
 const StoreContext = createContext<Ctx | null>(null);
 
@@ -137,6 +144,63 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(KEY, JSON.stringify(p));
     } catch {}
   }, [p, ready]);
+
+  // --- Synchronisation avec Supabase (si configuré et connecté) ---
+  const sb = getBrowserSupabase();
+  const online = sb !== null;
+  const [account, setAccount] = useState<Account>(null);
+  const synced = useRef(false);
+
+  const reloadAccount = useCallback(async () => {
+    if (!sb) return;
+    const { data } = await sb.auth.getUser();
+    const user = data.user;
+    synced.current = false;
+    if (!user) {
+      setAccount(null);
+      return;
+    }
+    setAccount({ id: user.id, email: user.email ?? "" });
+    const [{ data: row }, { data: sub }] = await Promise.all([
+      sb.from("progress").select("data").eq("user_id", user.id).maybeSingle(),
+      sb.from("subscriptions").select("plan, status").eq("user_id", user.id).maybeSingle(),
+    ]);
+    const plan: Plan = sub && ["active", "trialing"].includes(sub.status ?? "") ? (sub.plan as Plan) : "free";
+    setP((local) => {
+      const remote = row?.data as Partial<Progress> | undefined;
+      // On garde la progression la plus avancée (utile à la première connexion).
+      const base = remote && (remote.xp ?? 0) >= local.xp ? { ...initial(), ...remote } : local;
+      return refresh({ ...base, plan });
+    });
+    synced.current = true;
+  }, [sb]);
+
+  useEffect(() => {
+    if (!sb || !ready) return;
+    reloadAccount();
+    const { data } = sb.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT") reloadAccount();
+    });
+    return () => data.subscription.unsubscribe();
+  }, [sb, ready, reloadAccount]);
+
+  useEffect(() => {
+    if (!sb || !account || !synced.current) return;
+    const t = setTimeout(() => {
+      // Le plan n'est jamais écrit par le client : il vient du webhook Stripe.
+      const { plan: _plan, ...data } = p;
+      void _plan;
+      sb.from("progress").upsert({ user_id: account.id, data, updated_at: new Date().toISOString() }).then(() => {});
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [p, sb, account]);
+
+  const signOut = useCallback(async () => {
+    if (!sb) return;
+    await sb.auth.signOut();
+    setAccount(null);
+    setP(initial());
+  }, [sb]);
 
   const unlimited = p.plan !== "free";
 
@@ -207,7 +271,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const update = useCallback((patch: Partial<Progress>) => setP((s) => ({ ...s, ...patch })), []);
 
   return (
-    <StoreContext.Provider value={{ p, ready, unlimited, spendEnergy, spendAi, completeLesson, setPlan, reset, openChest, claimQuest, update }}>
+    <StoreContext.Provider value={{ p, ready, unlimited, spendEnergy, spendAi, completeLesson, setPlan, reset, openChest, claimQuest, update, account, online, signOut, reloadAccount }}>
       {children}
     </StoreContext.Provider>
   );
