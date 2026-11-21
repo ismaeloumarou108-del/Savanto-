@@ -17,6 +17,16 @@ document.querySelectorAll('.rv').forEach((el) => io.observe(el));
 requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('is-loaded')));
 document.body.classList.add('is-loaded');
 
+/* dock : visible après le hero, masqué sur la section contact */
+const dock = document.getElementById('dock');
+const contact = document.getElementById('contact');
+const dockCheck = () => {
+  const past = scrollY > innerHeight * 0.7;
+  const atEnd = contact.getBoundingClientRect().top < innerHeight * 0.6;
+  dock.classList.toggle('show', past && !atEnd);
+};
+addEventListener('scroll', dockCheck, { passive: true }); dockCheck();
+
 /* ---------- 3D : le repère local ---------- */
 const canvas = document.getElementById('scene');
 let renderer;
@@ -127,12 +137,14 @@ function initScene() {
     desktop: {
       hero:     { fx: 0.0,   fy: 0.02, s: 1.75, col: 0, sw: 0 },
       services: { fx: 0.66,  fy: -0.04, s: 1.45, col: 0, sw: 0 },
+      manifesto:{ fx: 0.0,   fy: -0.02, s: 1.55, col: 1, sw: 0 },
       method:   { fx: -0.58, fy: -0.04, s: 1.45, col: 0, sw: 0 },
       cta:      { fx: 0.62,  fy: -0.08, s: 1.2,  col: 1, sw: 1 },
     },
     mobile: {
       hero:     { fx: 0.0,   fy: 0.5,  s: 0.8, col: 0, sw: 0 },
       services: { fx: 0.72,  fy: 0.82, s: 0.0,  col: 0, sw: 0 },
+      manifesto:{ fx: 0.55,  fy: 0.18,  s: 0.7,  col: 1, sw: 0 },
       method:   { fx: -0.72, fy: 0.82, s: 0.0,  col: 0, sw: 0 },
       cta:      { fx: 0.0,   fy: 0.46, s: 0.62, col: 1, sw: 1 },
     },
