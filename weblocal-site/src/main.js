@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createCards } from './cards.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 const root = document.documentElement;
@@ -36,7 +37,7 @@ try {
 if (!renderer) { canvas.remove(); } else { initScene(); }
 
 function initScene() {
-  const COBALT = new THREE.Color('#1636B0');
+  const COBALT = new THREE.Color('#1F3FFF');
   const LEMON = new THREE.Color('#F2CC14');
   const SOFT = new THREE.Color('#FAEB94');
 
@@ -96,7 +97,7 @@ function initScene() {
   // ombre douce au sol
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.7, 48),
-    new THREE.MeshBasicMaterial({ color: '#0F2A7A', transparent: true, opacity: 0.16, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: '#0A1670', transparent: true, opacity: 0.16, depthWrite: false }),
   );
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = -0.93;
   shadow.material.opacity = 0.1;
@@ -135,18 +136,20 @@ function initScene() {
   const sections = [...document.querySelectorAll('[data-scene]')];
   const K = {
     desktop: {
-      hero:     { fx: 0.0,   fy: 0.02, s: 1.75, col: 0, sw: 0 },
-      services: { fx: 0.66,  fy: -0.04, s: 1.45, col: 0, sw: 0 },
-      manifesto:{ fx: 0.0,   fy: -0.02, s: 1.55, col: 1, sw: 0 },
-      method:   { fx: -0.58, fy: -0.04, s: 1.45, col: 0, sw: 0 },
-      cta:      { fx: 0.62,  fy: -0.08, s: 1.2,  col: 1, sw: 1 },
+      hero:     { fx: 0.0,   fy: 0.02, s: 1.75, col: 0, sw: 0, ui: 0.3 },
+      social:   { fx: 0.0,   fy: -0.12, s: 1.25, col: 1, sw: 0, ui: 1 },
+      services: { fx: 0.66,  fy: -0.04, s: 1.45, col: 0, sw: 0, ui: 0 },
+      manifesto:{ fx: 0.0,   fy: -0.02, s: 1.55, col: 1, sw: 0, ui: 0 },
+      method:   { fx: -0.58, fy: -0.04, s: 1.45, col: 0, sw: 0, ui: 0 },
+      cta:      { fx: 0.62,  fy: -0.08, s: 1.2,  col: 1, sw: 1, ui: 0 },
     },
     mobile: {
-      hero:     { fx: 0.0,   fy: 0.5,  s: 0.8, col: 0, sw: 0 },
-      services: { fx: 0.72,  fy: 0.82, s: 0.0,  col: 0, sw: 0 },
-      manifesto:{ fx: 0.55,  fy: 0.18,  s: 0.7,  col: 1, sw: 0 },
-      method:   { fx: -0.72, fy: 0.82, s: 0.0,  col: 0, sw: 0 },
-      cta:      { fx: 0.0,   fy: 0.46, s: 0.62, col: 1, sw: 1 },
+      hero:     { fx: 0.0,   fy: 0.5,  s: 0.8, col: 0, sw: 0, ui: 0.3 },
+      social:   { fx: 0.0,   fy: -0.2,  s: 0.85, col: 1, sw: 0, ui: 1 },
+      services: { fx: 0.72,  fy: 0.82, s: 0.0,  col: 0, sw: 0, ui: 0 },
+      manifesto:{ fx: 0.55,  fy: 0.18,  s: 0.7,  col: 1, sw: 0, ui: 0 },
+      method:   { fx: -0.72, fy: 0.82, s: 0.0,  col: 0, sw: 0, ui: 0 },
+      cta:      { fx: 0.0,   fy: 0.46, s: 0.62, col: 1, sw: 1, ui: 0 },
     },
   };
 
@@ -165,7 +168,7 @@ function initScene() {
 
   const smooth = (t) => t * t * (3 - 2 * t);
   const clamp01 = (v) => Math.min(1, Math.max(0, v));
-  const mix = (a, b, t) => ({ fx: a.fx + (b.fx - a.fx) * t, fy: a.fy + (b.fy - a.fy) * t, s: a.s + (b.s - a.s) * t, col: a.col + (b.col - a.col) * t, sw: a.sw + (b.sw - a.sw) * t });
+  const mix = (a, b, t) => ({ fx: a.fx + (b.fx - a.fx) * t, fy: a.fy + (b.fy - a.fy) * t, s: a.s + (b.s - a.s) * t, col: a.col + (b.col - a.col) * t, sw: a.sw + (b.sw - a.sw) * t, ui: a.ui + (b.ui - a.ui) * t });
 
   function targetState() {
     const set = mobile ? K.mobile : K.desktop;
@@ -178,7 +181,9 @@ function initScene() {
     return st;
   }
 
-  const cur = { fx: 0, fy: 0, s: 0, col: 0, sw: 0 };
+  const cur = { fx: 0, fy: 0, s: 0, col: 0, sw: 0, ui: 0 };
+  const cards = createCards(scene, camera);
+  const socialEl = document.querySelector('[data-scene="social"]');
   const mouse = { x: 0, y: 0, tx: 0, ty: 0 };
   addEventListener('pointermove', (e) => { mouse.tx = (e.clientX / W) * 2 - 1; mouse.ty = (e.clientY / H) * 2 - 1; }, { passive: true });
 
@@ -196,7 +201,7 @@ function initScene() {
 
     const tgt = targetState();
     const k = reduce ? 1 : 1 - Math.pow(0.0009, dt); // amortissement indépendant du framerate
-    for (const key of ['fx', 'fy', 's', 'col', 'sw']) cur[key] += (tgt[key] - cur[key]) * k;
+    for (const key of ['fx', 'fy', 's', 'col', 'sw', 'ui']) cur[key] += (tgt[key] - cur[key]) * k;
     mouse.x += (mouse.tx - mouse.x) * k * 0.6; mouse.y += (mouse.ty - mouse.y) * k * 0.6;
 
     // rotation : accélérée par le scroll puis relâchée
@@ -211,6 +216,15 @@ function initScene() {
     pin.rotation.set(mouse.y * 0.12, yaw, 0);
     bodyMat.color.lerpColors(COBALT, LEMON, cur.col);
     lemonMat.color.lerpColors(LEMON, COBALT, cur.col);
+
+    // cartes réseaux sociaux : écartées au fil du scroll dans leur section
+    const r = socialEl.getBoundingClientRect();
+    const p = clamp01((H * 0.5 - r.top) / Math.max(r.height, 1));
+    cards.group.position.set(rig.position.x, rig.position.y + 0.3 * cur.s, 0);
+    cards.update({
+      t, ui: cur.ui, spread: 0.8 * (0.92 + 0.2 * smooth(p)), narrow: mobile,
+      mouse, yaw: reduce ? 0 : (p - 0.5) * 0.7 + mouse.x * 0.15, reduce,
+    });
 
     // ombre / ondes
     shadow.scale.setScalar(1 - bob * 2.2);
