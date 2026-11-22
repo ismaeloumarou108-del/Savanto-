@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { createCards } from './cards.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 const root = document.documentElement;
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -17,6 +16,22 @@ const io = new IntersectionObserver((es) => {
 document.querySelectorAll('.rv').forEach((el) => io.observe(el));
 requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('is-loaded')));
 document.body.classList.add('is-loaded');
+
+/* halo qui suit le curseur + inclinaison 3D des cartes */
+const glow = document.getElementById('glow');
+let gx = innerWidth / 2, gy = innerHeight * 0.4, gtx = gx, gty = gy;
+addEventListener('pointermove', (e) => { gtx = e.clientX; gty = e.clientY; }, { passive: true });
+if (!reduce) (function glowLoop() { gx += (gtx - gx) * 0.08; gy += (gty - gy) * 0.08; glow.style.transform = `translate(${gx}px,${gy}px)`; requestAnimationFrame(glowLoop); })();
+document.querySelectorAll('[data-tilt]').forEach((el) => {
+  if (reduce) return;
+  el.addEventListener('pointermove', (e) => {
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5, py = (e.clientY - r.top) / r.height - 0.5;
+    el.style.transition = 'transform .2s ease-out, border-color .5s, background .5s';
+    el.style.transform = `perspective(900px) rotateX(${(-py * 9).toFixed(2)}deg) rotateY(${(px * 12).toFixed(2)}deg) translateZ(14px)`;
+  });
+  el.addEventListener('pointerleave', () => { el.style.transition = 'transform .8s cubic-bezier(.16,1,.3,1), border-color .5s, background .5s'; el.style.transform = ''; });
+});
 
 /* dock : visible après le hero, masqué sur la section contact */
 const dock = document.getElementById('dock');
@@ -37,18 +52,27 @@ try {
 if (!renderer) { canvas.remove(); } else { initScene(); }
 
 function initScene() {
-  const COBALT = new THREE.Color('#1F3FFF');
-  const LEMON = new THREE.Color('#F2CC14');
+  const COBALT = new THREE.Color('#2B4BFF');
+  const LEMON = new THREE.Color('#F5D532');
   const SOFT = new THREE.Color('#FAEB94');
 
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.95;
+  renderer.toneMappingExposure = 1.0;
 
   const scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.5;
+  // environnement sombre avec panneaux lumineux colorés : reflets "liquid glass"
+  const envScene = new THREE.Scene();
+  envScene.background = new THREE.Color('#02030a');
+  [['#3D5BFF', 6, 10, 4, [6, 4, 5]], ['#9A7BFF', 5, 6, 8, [-7, 2, 2]], ['#5CE1FF', 5, 12, 2, [0, 6, -4]],
+   ['#ffffff', 8, 3, 10, [3, -1, -7]], ['#F5D532', 4, 5, 3, [-4, -4, 5]], ['#1B3BFF', 4, 14, 3, [0, -6, 0]]]
+    .forEach(([c, i, w, h, p]) => {
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(i), side: THREE.DoubleSide }));
+      pl.position.set(...p); pl.lookAt(0, 0, 0); envScene.add(pl);
+    });
+  scene.environment = pmrem.fromScene(envScene, 0.02).texture;
+  scene.environmentIntensity = 1.15;
 
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 60);
   camera.position.set(0, 1.6, 10);
@@ -65,11 +89,13 @@ function initScene() {
   ].map(([x, y]) => new THREE.Vector2(x, y))).getPoints(72);
   const pinGeo = new THREE.LatheGeometry(profile, 96);
 
+  const EMI_BLUE = new THREE.Color('#0A1DAA'), EMI_LEMON = new THREE.Color('#8A6A00');
   const bodyMat = new THREE.MeshPhysicalMaterial({
-    color: COBALT, roughness: 0.2, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.06,
+    color: COBALT, roughness: 0.12, metalness: 0.35, clearcoat: 1, clearcoatRoughness: 0.04,
+    iridescence: 1, iridescenceIOR: 1.7, iridescenceThicknessRange: [200, 720], emissive: EMI_BLUE, emissiveIntensity: 0.55,
   });
   const lemonMat = new THREE.MeshPhysicalMaterial({
-    color: LEMON, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1,
+    color: LEMON, roughness: 0.18, metalness: 0.4, clearcoat: 1, clearcoatRoughness: 0.06, emissive: '#7A5A00', emissiveIntensity: 0.35,
   });
 
   const rig = new THREE.Group();      // position / échelle (suit le scroll)
@@ -89,7 +115,7 @@ function initScene() {
   for (let i = 0; i < 3; i++) {
     const m = new THREE.Mesh(
       new THREE.RingGeometry(0.97, 1, 128),
-      new THREE.MeshBasicMaterial({ color: LEMON, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: '#4C6BFF', transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
     );
     m.rotation.x = -Math.PI / 2; m.position.y = -0.92;
     rig.add(m); ripples.push(m);
@@ -97,11 +123,32 @@ function initScene() {
   // ombre douce au sol
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.7, 48),
-    new THREE.MeshBasicMaterial({ color: '#0A1670', transparent: true, opacity: 0.16, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: '#1B3BFF', transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }),
   );
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = -0.93;
-  shadow.material.opacity = 0.1;
   rig.add(shadow);
+  // jauge circulaire en pointillés autour du repère + poussière lumineuse
+  const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+    const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.35, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+  const ptsMat = (color, size, op) => new THREE.PointsMaterial({ color, size, map: dotTex, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+  const ringPts = (n, r, from = 0, to = Math.PI * 2) => {
+    const a = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { const t = from + (i / n) * (to - from); a.set([Math.cos(t) * r, 0, Math.sin(t) * r], i * 3); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(a, 3)); return g;
+  };
+  const gauge = new THREE.Group(); gauge.position.y = 0.2; gauge.rotation.x = 1.18; gauge.rotation.z = 0.15;
+  const ringA = new THREE.Points(ringPts(150, 2.0), ptsMat('#9DB0FF', 0.06, 0.8));
+  const ringB = new THREE.Points(ringPts(110, 2.7), ptsMat('#4C6BFF', 0.05, 0.7));
+  const arc = new THREE.Points(ringPts(46, 2.0, 0, 1.7), ptsMat('#5CE1FF', 0.12, 1));
+  gauge.add(ringA, ringB, arc); rig.add(gauge);
+  const dust = (() => {
+    const n = 420, a = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) a.set([(Math.random() - .5) * 26, (Math.random() - .5) * 15, -9 + Math.random() * 10], i * 3);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(a, 3));
+    return new THREE.Points(g, ptsMat('#9DB0FF', 0.05, 0.55));
+  })();
+  scene.add(dust);
   scene.add(rig);
 
   // Essaim de pins : la croissance
@@ -215,7 +262,10 @@ function initScene() {
     rig.scale.setScalar(Math.max(sc, 0.001));
     pin.rotation.set(mouse.y * 0.12, yaw, 0);
     bodyMat.color.lerpColors(COBALT, LEMON, cur.col);
+    bodyMat.emissive.lerpColors(EMI_BLUE, EMI_LEMON, cur.col);
     lemonMat.color.lerpColors(LEMON, COBALT, cur.col);
+    gauge.rotation.y = t * 0.12 + spin * 0.6; ringB.rotation.y = -t * 0.07 - spin * 0.3; arc.rotation.y = -t * 0.6 + spin;
+    dust.rotation.y = t * 0.012 + scrollY * 0.0003; dust.position.y = (scrollY % 4000) * 0.0008;
 
     // cartes réseaux sociaux : écartées au fil du scroll dans leur section
     const r = socialEl.getBoundingClientRect();
@@ -232,8 +282,7 @@ function initScene() {
       const p = ((t * 0.28 + i / 3) % 1);
       const r = 0.45 + p * 2.6;
       m.scale.setScalar(r);
-      m.material.opacity = (1 - p) * 0.9 * (reduce ? 0.5 : 1) * introE;
-      m.material.color.lerpColors(LEMON, COBALT, cur.col * 0);
+      m.material.opacity = (1 - p) * 0.55 * (reduce ? 0.5 : 1) * introE;
     });
 
     // essaim

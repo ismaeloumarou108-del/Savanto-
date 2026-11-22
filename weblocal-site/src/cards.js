@@ -5,7 +5,6 @@ import * as THREE from 'three';
 
 const smooth = (t) => t * t * (3 - 2 * t);
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
-const EL = '#1B3BFF';
 
 function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
 
@@ -28,7 +27,7 @@ const painters = {
   fb(c, S) {
     const g = c.createLinearGradient(0, 0, 0, S); g.addColorStop(0, '#6B86FF'); g.addColorStop(1, '#2A4BFF');
     tile(c, S, g);
-    c.fillStyle = '#fff'; c.font = `700 ${S * .78}px "Instrument Sans", Arial, sans-serif`;
+    c.fillStyle = '#fff'; c.font = `700 ${S * .78}px Outfit, Arial, sans-serif`;
     c.textAlign = 'center'; c.textBaseline = 'alphabetic'; c.fillText('f', S * .57, S * .84);
   },
   tt(c, S) {
@@ -56,38 +55,43 @@ const painters = {
 
 function paintChart(c, W, Hh, prog, ph, label) {
   c.clearRect(0, 0, W, Hh);
-  rr(c, 4, 4, W - 8, Hh - 8, 34);
+  rr(c, 4, 4, W - 8, Hh - 8, 44);
   const g = c.createLinearGradient(0, 0, W, Hh);
-  g.addColorStop(0, 'rgba(255,255,255,.36)'); g.addColorStop(1, 'rgba(255,255,255,.1)');
-  c.fillStyle = g; c.fill(); c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.75)'; c.stroke();
-  // en-tête
-  rr(c, 30, 28, 58, 58, 16); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
-  c.fillStyle = EL; c.font = `700 36px "Instrument Sans", Arial, sans-serif`; c.textAlign = 'center'; c.fillText(label, 59, 68);
-  c.fillStyle = 'rgba(255,255,255,.9)'; rr(c, 108, 38, 150, 14, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.5)'; rr(c, 108, 62, 96, 12, 6); c.fill();
-  c.fillStyle = '#FFD60A'; c.beginPath(); c.arc(W - 62, 57, 26, 0, 7); c.fill();
-  c.fillStyle = '#0A1670'; c.font = `700 30px "Instrument Sans", Arial, sans-serif`; c.fillText('↗', W - 62, 68);
+  g.addColorStop(0, 'rgba(110,140,255,.30)'); g.addColorStop(.55, 'rgba(40,60,200,.16)'); g.addColorStop(1, 'rgba(150,110,255,.14)');
+  c.fillStyle = g; c.fill();
+  const sg = c.createLinearGradient(0, 0, W, Hh);
+  sg.addColorStop(0, 'rgba(255,255,255,.85)'); sg.addColorStop(.35, 'rgba(120,150,255,.6)'); sg.addColorStop(.7, 'rgba(170,120,255,.6)'); sg.addColorStop(1, 'rgba(92,225,255,.8)');
+  c.lineWidth = 3; c.strokeStyle = sg; c.stroke();
+  // en-tête : pastille + libellé fin
+  c.beginPath(); c.arc(60, 58, 26, 0, 7); c.fillStyle = 'rgba(255,255,255,.14)'; c.fill();
+  c.fillStyle = '#fff'; c.font = '500 30px Outfit, Arial, sans-serif'; c.textAlign = 'center'; c.fillText(label, 60, 69);
+  c.textAlign = 'left'; c.font = '300 26px Outfit, Arial, sans-serif'; c.fillStyle = 'rgba(235,240,255,.9)'; c.fillText('Croissance', 104, 56);
+  c.font = '300 20px Outfit, Arial, sans-serif'; c.fillStyle = 'rgba(200,210,255,.55)'; c.fillText('ce mois-ci', 104, 82);
+  c.fillStyle = '#F5D532'; c.beginPath(); c.arc(W - 60, 58, 24, 0, 7); c.fill();
+  c.fillStyle = '#0A1670'; c.font = '600 28px Outfit, Arial, sans-serif'; c.textAlign = 'center'; c.fillText('↗', W - 60, 68);
   // zone courbe
   const x0 = 30, y0 = 112, w = W - 60, h = Hh - 112 - 30;
-  rr(c, x0, y0, w, h, 22); c.fillStyle = 'rgba(255,255,255,.86)'; c.fill();
-  c.strokeStyle = 'rgba(27,59,255,.12)'; c.lineWidth = 2;
-  for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(x0 + 18, y0 + (h * i) / 4); c.lineTo(x0 + w - 18, y0 + (h * i) / 4); c.stroke(); }
-  const pts = [];
-  const N = 64;
+  rr(c, x0, y0, w, h, 30); c.fillStyle = 'rgba(4,8,40,.62)'; c.fill();
+  c.strokeStyle = 'rgba(130,155,255,.14)'; c.lineWidth = 2;
+  for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(x0 + 20, y0 + (h * i) / 4); c.lineTo(x0 + w - 20, y0 + (h * i) / 4); c.stroke(); }
+  const pts = [], N = 64;
   for (let i = 0; i <= N * prog; i++) {
     const u = i / N;
     const v = 0.82 - 0.6 * u - 0.07 * Math.sin(u * 10 + ph) * (1 - u * .4);
-    pts.push([x0 + 22 + u * (w - 44), y0 + 18 + v * (h - 36)]);
+    pts.push([x0 + 24 + u * (w - 48), y0 + 20 + v * (h - 40)]);
   }
   if (pts.length > 1) {
     const last = pts[pts.length - 1];
-    c.beginPath(); c.moveTo(pts[0][0], y0 + h - 14);
-    pts.forEach(([x, y]) => c.lineTo(x, y)); c.lineTo(last[0], y0 + h - 14); c.closePath();
-    const ag = c.createLinearGradient(0, y0, 0, y0 + h); ag.addColorStop(0, 'rgba(27,59,255,.30)'); ag.addColorStop(1, 'rgba(27,59,255,0)');
+    c.beginPath(); c.moveTo(pts[0][0], y0 + h - 16);
+    pts.forEach(([x, y]) => c.lineTo(x, y)); c.lineTo(last[0], y0 + h - 16); c.closePath();
+    const ag = c.createLinearGradient(0, y0, 0, y0 + h); ag.addColorStop(0, 'rgba(76,107,255,.55)'); ag.addColorStop(1, 'rgba(76,107,255,0)');
     c.fillStyle = ag; c.fill();
+    const lg = c.createLinearGradient(x0, 0, x0 + w, 0); lg.addColorStop(0, '#4C6BFF'); lg.addColorStop(.6, '#9DB0FF'); lg.addColorStop(1, '#5CE1FF');
+    c.save(); c.shadowColor = '#4C6BFF'; c.shadowBlur = 22;
     c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
-    c.strokeStyle = EL; c.lineWidth = 7; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke();
-    c.fillStyle = '#FFD60A'; c.strokeStyle = EL; c.lineWidth = 5;
-    c.beginPath(); c.arc(last[0], last[1], 11, 0, 7); c.fill(); c.stroke();
+    c.strokeStyle = lg; c.lineWidth = 7; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke(); c.restore();
+    c.save(); c.shadowColor = '#F5D532'; c.shadowBlur = 24; c.fillStyle = '#F5D532';
+    c.beginPath(); c.arc(last[0], last[1], 11, 0, 7); c.fill(); c.restore();
   }
 }
 
@@ -151,7 +155,7 @@ export function createCards(scene, camera) {
       const o = n * 6;
       if (!m.visible) { linePos.fill(0, o, o + 6); return; }
       anyVisible = Math.max(anyVisible, vis);
-      const kx = (narrow ? 0.36 : 1) * spread, ky = (narrow ? 0.9 : 1) * spread, k = spread;
+      const kx = (narrow ? 0.36 : 1) * spread, ky = (narrow ? 0.7 : 1) * spread, k = spread;
       const fly = 1 - vis;
       const bob = reduce ? 0 : Math.sin(t * 1.05 + cd.ph) * 0.14;
       const dir = Math.sign(cd.x) || 1;
